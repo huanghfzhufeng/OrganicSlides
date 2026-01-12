@@ -1,0 +1,76 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;400;600;700&family=Nunito:wght@400;500;600;700&display=swap');
+
+/* Theme Configuration */
+@theme {
+  --font-fraunces: 'Fraunces', serif;
+  --font-nunito: 'Nunito', sans-serif;
+
+  --color-organic-primary: #5D7052;
+  --color-organic-secondary: #C18C5D;
+  --color-organic-bg: #FDFCF8;
+  --color-organic-text: #2C2C24;
+  --color-organic-accent: #A85448;
+  --color-organic-light: #DED8CF;
+
+  --animate-spin-slow: spin 3s linear infinite;
+}
+
+@layer base {
+  body {
+    background-color: #FDFCF8;
+    color: #2C2C24;
+    font-family: 'Nunito', sans-serif;
+    overflow-x: hidden;
+  }
+}
+
+.font-fraunces {
+  font-family: 'Fraunces', serif;
+}
+
+.font-nunito {
+  font-family: 'Nunito', sans-serif;
+}
+
+.animate-spin-slow {
+  animation: spin 3s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #DED8CF;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #C18C5D;
+}
+
+/* No scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
