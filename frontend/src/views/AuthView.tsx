@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Mail, Lock, User, ArrowRight, Loader2 } from 'lucide-react';
 import BlobButton from '../components/BlobButton';
 import { api } from '../api/client';
+import { nutLeavesIcon } from '../assets/icons';
 
 interface AuthViewProps {
     onAuthSuccess: () => void;
@@ -37,6 +38,7 @@ const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
 
     return (
         <div className="flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-md mx-auto">
+            <img src={nutLeavesIcon} alt="" className="w-20 h-20 mb-4 opacity-80 drop-shadow-md" />
             <h1 className="font-fraunces text-4xl md:text-5xl text-[#2C2C24] mb-4 leading-tight">
                 {isLogin ? '欢迎回来' : '加入我们'}
             </h1>

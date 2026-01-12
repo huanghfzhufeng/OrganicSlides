@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { Sparkles, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import NoiseOverlay from './components/NoiseOverlay';
 import StepIndicator from './components/StepIndicator';
 import AuthView from './views/AuthView';
@@ -10,6 +10,7 @@ import OutlineEditor from './views/OutlineEditor';
 import StyleSelector from './views/StyleSelector';
 import GenerationResultView from './views/GenerationResultView';
 import { api, tokenManager, type OutlineItem, type User } from './api/client';
+import { seedlingIcon } from './assets/icons';
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -97,9 +98,7 @@ function App() {
       <nav className="sticky top-0 z-40 bg-[#FDFCF8]/80 backdrop-blur-md border-b border-[#DED8CF]/30 mb-8">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-[#5D7052] flex items-center justify-center text-white rounded-lg">
-              <Sparkles size={16} />
-            </div>
+            <img src={seedlingIcon} alt="OrganicSlides" className="w-8 h-8 drop-shadow-sm" />
             <span className="font-fraunces font-bold text-lg text-[#2C2C24]">OrganicSlides</span>
           </div>
           <div className="flex items-center gap-4 text-sm font-bold text-[#78786C]">
