@@ -8,6 +8,7 @@ import InputView from './views/InputView';
 import ResearchView from './views/ResearchView';
 import OutlineEditor from './views/OutlineEditor';
 import StyleSelector from './views/StyleSelector';
+import RenderPathSelector, { type RenderPathPreference } from './views/RenderPathSelector';
 import GenerationResultView from './views/GenerationResultView';
 import { api, tokenManager, type OutlineItem, type User } from './api/client';
 import { seedlingIcon } from './assets/icons';
@@ -19,7 +20,8 @@ function App() {
   const [prompt, setPrompt] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
-  const [selectedStyle, _setSelectedStyle] = useState("organic");
+  const [selectedStyleId, setSelectedStyleId] = useState("");
+  const [renderPathPreference, setRenderPathPreference] = useState<RenderPathPreference>('auto');
   const [error, setError] = useState<string | null>(null);
 
   // 检查登录状态
@@ -53,14 +55,41 @@ function App() {
     setUser(null);
     setStep(0);
     setSessionId(null);
+    setSelectedStyleId('');
+  };
+
+  const handleRestart = () => {
+    setStep(0);
+    setSessionId(null);
+    setSelectedStyleId('');
+    setRenderPathPreference('auto');
   };
 
   const handleStartProject = async () => {
     try {
       setError(null);
-      const res = await api.createProject(prompt, selectedStyle);
+      const res = await api.createProject(prompt);
       setSessionId(res.session_id);
       setStep(1);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  // Style chosen → advance within step 3 to render path sub-step
+  const handleStyleSelected = (styleId: string) => {
+    setSelectedStyleId(styleId);
+    // Stay on step 3; the render path selector will appear next
+  };
+
+  // Render path chosen → pass both style_id and render_path_preference to backend, start generation
+  const handleRenderPathSelected = async (preference: RenderPathPreference) => {
+    if (!sessionId) return;
+    try {
+      setError(null);
+      setRenderPathPreference(preference);
+      await api.updateSessionStyle(sessionId, selectedStyleId, preference);
+      setStep(4);
     } catch (err: any) {
       setError(err.message);
     }
@@ -77,9 +106,6 @@ function App() {
     }
   };
 
-  const startGeneration = () => {
-    setStep(4);
-  };
 
   if (isLoading) {
     return (
@@ -111,7 +137,7 @@ function App() {
               </>
             )}
             {user && step > 0 && (
-              <button onClick={() => { setStep(0); setSessionId(null); }} className="hover:text-[#5D7052]">
+              <button onClick={handleRestart} className="hover:text-[#5D7052]">
                 重新开始
               </button>
             )}
@@ -161,9 +187,17 @@ function App() {
                 />
               )}
 
-              {step === 3 && (
+              {step === 3 && !selectedStyleId && (
                 <StyleSelector
-                  onNext={startGeneration}
+                  userIntent={prompt}
+                  onNext={handleStyleSelected}
+                />
+              )}
+
+              {step === 3 && selectedStyleId && (
+                <RenderPathSelector
+                  onNext={handleRenderPathSelected}
+                  onBack={() => setSelectedStyleId('')}
                 />
               )}
 

@@ -1,0 +1,191 @@
+{
+  "version": "1.0",
+  "total_styles": 24,
+  "last_updated": "2026-03-01",
+  "styles": [
+    {
+      "id": "01-snoopy",
+      "name_zh": "Snoopy温暖漫画",
+      "tier": 1,
+      "path": "/static/styles/01-snoopy.json"
+    },
+    {
+      "id": "02-manga",
+      "name_zh": "学習漫画 Manga",
+      "tier": 1,
+      "path": "/static/styles/02-manga.json"
+    },
+    {
+      "id": "03-ligne-claire",
+      "name_zh": "Ligne Claire清线漫画",
+      "tier": 1,
+      "path": "/static/styles/03-ligne-claire.json"
+    },
+    {
+      "id": "04-neo-pop",
+      "name_zh": "Neo-Pop新波普",
+      "tier": 1,
+      "path": "/static/styles/04-neo-pop.json"
+    },
+    {
+      "id": "05-xkcd",
+      "name_zh": "xkcd白板手绘",
+      "tier": 2,
+      "path": "/static/styles/05-xkcd.json"
+    },
+    {
+      "id": "06-constructivism",
+      "name_zh": "苏联构成主义",
+      "tier": 2,
+      "path": "/static/styles/06-constructivism.json"
+    },
+    {
+      "id": "07-dunhuang",
+      "name_zh": "敦煌壁画",
+      "tier": 2,
+      "path": "/static/styles/07-dunhuang.json"
+    },
+    {
+      "id": "08-ukiyo-e",
+      "name_zh": "浮世绘",
+      "tier": 2,
+      "path": "/static/styles/08-ukiyo-e.json"
+    },
+    {
+      "id": "09-warm-narrative",
+      "name_zh": "温暖叙事",
+      "tier": 3,
+      "path": "/static/styles/09-warm-narrative.json"
+    },
+    {
+      "id": "10-oatmeal",
+      "name_zh": "The Oatmeal信息图漫画",
+      "tier": 2,
+      "path": "/static/styles/10-oatmeal.json"
+    },
+    {
+      "id": "11-risograph",
+      "name_zh": "孔版印刷Risograph",
+      "tier": 3,
+      "path": "/static/styles/11-risograph.json"
+    },
+    {
+      "id": "12-isometric",
+      "name_zh": "等轴测Isometric",
+      "tier": 3,
+      "path": "/static/styles/12-isometric.json"
+    },
+    {
+      "id": "13-bauhaus",
+      "name_zh": "Bauhaus包豪斯",
+      "tier": 3,
+      "path": "/static/styles/13-bauhaus.json"
+    },
+    {
+      "id": "14-blueprint",
+      "name_zh": "工程蓝图Blueprint",
+      "tier": 3,
+      "path": "/static/styles/14-blueprint.json"
+    },
+    {
+      "id": "15-vintage-ad",
+      "name_zh": "复古广告Vintage Ad",
+      "tier": 3,
+      "path": "/static/styles/15-vintage-ad.json"
+    },
+    {
+      "id": "16-collage",
+      "name_zh": "达达拼贴Collage",
+      "tier": 3,
+      "path": "/static/styles/16-collage.json"
+    },
+    {
+      "id": "17-pixel-art",
+      "name_zh": "像素画Pixel Art",
+      "tier": 3,
+      "path": "/static/styles/17-pixel-art.json"
+    },
+    {
+      "id": "18-neo-brutalism",
+      "name_zh": "Neo-Brutalism新粗野主义",
+      "tier": 1,
+      "path": "/static/styles/18-neo-brutalism.json"
+    },
+    {
+      "id": "p1-pentagram",
+      "name_zh": "Pentagram Editorial",
+      "tier": "editorial",
+      "path": "/static/styles/p1-pentagram.json"
+    },
+    {
+      "id": "p2-fathom",
+      "name_zh": "Fathom Data Narrative",
+      "tier": "editorial",
+      "path": "/static/styles/p2-fathom.json"
+    },
+    {
+      "id": "p3-muller-brockmann",
+      "name_zh": "Müller-Brockmann Grid",
+      "tier": "editorial",
+      "path": "/static/styles/p3-muller-brockmann.json"
+    },
+    {
+      "id": "p4-build-luxury",
+      "name_zh": "Build Luxury Minimal",
+      "tier": "editorial",
+      "path": "/static/styles/p4-build-luxury.json"
+    },
+    {
+      "id": "p5-takram",
+      "name_zh": "Takram Speculative",
+      "tier": "editorial",
+      "path": "/static/styles/p5-takram.json"
+    },
+    {
+      "id": "p6-nyt-magazine",
+      "name_zh": "NYT Magazine Editorial",
+      "tier": "editorial",
+      "path": "/static/styles/p6-nyt-magazine.json"
+    }
+  ],
+  "tier_breakdown": {
+    "tier_1": ["01-snoopy", "04-neo-pop", "18-neo-brutalism"],
+    "tier_2": ["05-xkcd", "06-constructivism", "07-dunhuang", "08-ukiyo-e", "10-oatmeal", "02-manga", "03-ligne-claire"],
+    "tier_3": ["09-warm-narrative", "11-risograph", "12-isometric", "13-bauhaus", "14-blueprint", "15-vintage-ad", "16-collage", "17-pixel-art"],
+    "editorial": ["p1-pentagram", "p2-fathom", "p3-muller-brockmann", "p4-build-luxury", "p5-takram", "p6-nyt-magazine"]
+  },
+  "recommendation_by_theme": {
+    "brand_product": ["01-snoopy", "04-neo-pop", "08-ukiyo-e", "07-dunhuang"],
+    "education_training": ["18-neo-brutalism", "02-manga", "01-snoopy"],
+    "technical_sharing": ["05-xkcd", "18-neo-brutalism", "03-ligne-claire"],
+    "data_report": ["p6-nyt-magazine", "p1-pentagram", "03-ligne-claire"],
+    "young_audience": ["04-neo-pop", "17-pixel-art", "11-risograph"],
+    "cultural_oriental": ["07-dunhuang", "08-ukiyo-e", "09-warm-narrative"],
+    "formal_business": ["p6-nyt-magazine", "p1-pentagram", "p4-build-luxury"],
+    "product_launch": ["06-constructivism", "04-neo-pop", "18-neo-brutalism"],
+    "industry_analysis": ["p1-pentagram", "p6-nyt-magazine", "p2-fathom"],
+    "training_material": ["p5-takram", "09-warm-narrative", "02-manga"],
+    "investment_roadshow": ["p4-build-luxury", "p6-nyt-magazine", "p1-pentagram"],
+    "internal_sharing": ["18-neo-brutalism", "10-oatmeal", "05-xkcd"]
+  },
+  "sample_images_directory": "/static/styles/samples/",
+  "samples_available": [
+    "style-01-snoopy.png",
+    "style-02-manga.png",
+    "style-03-ligne-claire.png",
+    "style-04-neo-pop.png",
+    "style-05-xkcd.png",
+    "style-06-constructivism.png",
+    "style-07-dunhuang.png",
+    "style-08-ukiyo-e.png",
+    "style-09-warm-narrative.png",
+    "style-10-oatmeal.png",
+    "style-11-risograph.png",
+    "style-12-isometric.png",
+    "style-13-bauhaus.png",
+    "style-14-blueprint.png",
+    "style-15-vintage-ad.png",
+    "style-16-collage.png",
+    "style-17-pixel-art.png"
+  ]
+}

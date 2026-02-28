@@ -1,0 +1,39 @@
+{
+  "id": "18-neo-brutalism",
+  "name_zh": "Neo-Brutalism新粗野主义",
+  "name_en": "Neo-Brutalism",
+  "tier": 1,
+  "description": "粗黑边框+高饱和色块+超大字。远距离可读性极强，HTML渲染稳定。企业内训专家级风格。",
+  "colors": {
+    "primary": "#F5E6D3",
+    "secondary": "#FF3B4F",
+    "background": "#F5E6D3",
+    "text": "#1A1A1A",
+    "accent": "#FFD700",
+    "additional": ["#1A1A1A"]
+  },
+  "typography": {
+    "title_size": "48pt+",
+    "body_size": "18pt+",
+    "family": "Bold sans-serif (Helvetica Neue Bold, Arial Black)"
+  },
+  "use_cases": [
+    "企业内训",
+    "线下技术分享",
+    "数据密集报告",
+    "Workshop工作坊",
+    "步骤指引"
+  ],
+  "sample_image_path": "/static/styles/samples/style-18-neo-brutalism.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Neo-Brutalism design. Cream (#F5E6D3) 40%, revolution red (#FF3B4F) 25%, gold (#FFD700) 20%, deep black (#1A1A1A) 15%. Thick black borders (4-6px) on all important elements. High-saturation color blocks with clear boundaries. Super-large typography (3-6vw) — title occupies 15-30% of slide area. Sans-serif bold fonts. Offset shadow (8px 8px, solid black). Flat geometric icons with borders. NO gradients.",
+  "key_principles": [
+    "粗黑边框4-6px",
+    "高饱和色块分区",
+    "超大字排版",
+    "偏移实色阴影",
+    "远距离可读性",
+    "HTML渲染稳定"
+  ],
+  "implementation_notes": "无需AI生成图像——纯CSS即可完美实现。Path A推荐。CSS简单，无复杂SVG，渲染成功率接近100%。"
+}

@@ -1,0 +1,35 @@
+{
+  "id": "10-oatmeal",
+  "name_zh": "The Oatmeal信息图漫画",
+  "name_en": "The Oatmeal Infographic",
+  "tier": 2,
+  "description": "搞笑夸张，信息密度适中。大头角色极度夸张表情+信息图式数据。",
+  "colors": {
+    "primary": "#F8F8F8",
+    "secondary": "#FF6B35",
+    "background": "#F8F8F8",
+    "text": "#333333",
+    "accent": "#FF2442"
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "16pt+",
+    "family": "Bold sans-serif"
+  },
+  "use_cases": [
+    "科普内容",
+    "社交传播",
+    "内部培训",
+    "趣味讲解",
+    "数据可视化"
+  ],
+  "sample_image_path": "/static/styles/samples/style-10-oatmeal.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "The Oatmeal infographic style. Light gray-white (#F8F8F8) background, bright orange (#FF6B35), deep gray (#333333), brand red (#FF2442). Large-headed characters with extremely exaggerated expressions. Thick hand-drawn lines. Information graphics mixed with humor. Data visualization integrated into narrative. Highly entertaining while delivering information.",
+  "key_principles": [
+    "大头角色表情夸张",
+    "粗线条手绘",
+    "信息图式数据",
+    "幽默感强"
+  ]
+}

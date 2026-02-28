@@ -1,0 +1,36 @@
+{
+  "id": "16-collage",
+  "name_zh": "达达拼贴Collage",
+  "name_en": "Dada Collage",
+  "tier": 3,
+  "description": "反规则，最另类。撕纸碎片+混搭字体+胶带+有序的混乱。",
+  "colors": {
+    "primary": "#F5F5F5",
+    "secondary": "#000000",
+    "background": "#F5F5F5",
+    "text": "#1A1A1A",
+    "accent": "#FF0000",
+    "additional": ["#FFEAA7"]
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "18pt+",
+    "family": "Mixed (various fonts)"
+  },
+  "use_cases": [
+    "创意行业",
+    "广告设计",
+    "艺术项目",
+    "破冰活动",
+    "创意突破"
+  ],
+  "sample_image_path": "/static/styles/samples/style-16-collage.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Dada collage style. Paper white (#F5F5F5), ink black (#000000), brand red (#FF0000), tape yellow (#FFEAA7), random colors. Torn paper fragments. Mixed fonts and angles. Tape and pins. Rubber stamp data. Ordered chaos. Anti-design aesthetic that rules through rule-breaking.",
+  "key_principles": [
+    "撕纸碎片",
+    "混搭字体+角度",
+    "胶带别针",
+    "有序的混乱"
+  ]
+}

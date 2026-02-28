@@ -1,0 +1,35 @@
+{
+  "id": "04-neo-pop",
+  "name_zh": "Neo-Pop新波普",
+  "name_en": "Neo-Pop Magazine",
+  "tier": 1,
+  "description": "潮流感强，视觉冲击力大。字体大小对比(10:1)是核心——标题占据50%画面。",
+  "colors": {
+    "primary": "#FF1493",
+    "secondary": "#00CED1",
+    "background": "#000000",
+    "text": "#FFFFFF",
+    "accent": "#FFD700"
+  },
+  "typography": {
+    "title_size": "48pt+",
+    "body_size": "18pt+",
+    "family": "Bold sans-serif (heavy weights)"
+  },
+  "use_cases": [
+    "年轻品牌",
+    "社交平台",
+    "活动发布",
+    "产品发布",
+    "时尚行业"
+  ],
+  "sample_image_path": "/static/styles/samples/style-04-neo-pop.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Neo-Pop magazine style with bold typography, high contrast colors, and modern aesthetic. Large title typography dominates the composition (10:1 size ratio). Color blocks provide visual organization. Avoid rendering actual typography as text (use visual representation instead). Contemporary pop culture influence with digital-native energy.",
+  "key_principles": [
+    "字体大小对比(10:1)核心",
+    "色块分区帮助信息组织",
+    "避免文字数字被渲染",
+    "当代潮流感"
+  ]
+}

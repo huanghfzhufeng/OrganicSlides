@@ -1,0 +1,35 @@
+{
+  "id": "03-ligne-claire",
+  "name_zh": "Ligne Claire清线漫画",
+  "name_en": "Clear Line (Ligne Claire)",
+  "tier": 1,
+  "description": "信息清晰度最高——均匀线条+平涂色块=零视觉噪音。适合精确信息传达。",
+  "colors": {
+    "primary": "#FFFFFF",
+    "secondary": "#1E88E5",
+    "background": "#FFFFFF",
+    "text": "#000000",
+    "accent": "#E53935"
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "18pt+",
+    "family": "Clean sans-serif"
+  },
+  "use_cases": [
+    "产品说明",
+    "流程解释",
+    "信息清晰传达",
+    "技术说明",
+    "步骤指引"
+  ],
+  "sample_image_path": "/static/styles/samples/style-03-ligne-claire.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Ligne Claire comic style with uniform line thickness and flat color blocks. Zero visual noise. 2-4 panel layout as needed. Emphasis on clarity and information precision. Minimal backgrounds, focus on subjects. Clean, modern aesthetic with European comic tradition.",
+  "key_principles": [
+    "均匀线条+平涂色块",
+    "零视觉噪音",
+    "2-4面板按需分配",
+    "信息清晰第一"
+  ]
+}

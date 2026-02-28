@@ -1,0 +1,35 @@
+{
+  "id": "05-xkcd",
+  "name_zh": "xkcd白板手绘",
+  "name_en": "Whiteboard Sketch (XKCD Style)",
+  "tier": 2,
+  "description": "极简幽默，复杂概念秒懂。简笔画风格，适合极客受众。",
+  "colors": {
+    "primary": "#FFFFFF",
+    "secondary": "#000000",
+    "background": "#FFFFFF",
+    "text": "#000000",
+    "accent": "#CCCCCC"
+  },
+  "typography": {
+    "title_size": "24pt+",
+    "body_size": "14pt+",
+    "family": "Comic Sans-like (casual)"
+  },
+  "use_cases": [
+    "技术分享",
+    "极客受众",
+    "课堂讲解",
+    "概念说明",
+    "复杂流程简化"
+  ],
+  "sample_image_path": "/static/styles/samples/style-05-xkcd.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "XKCD-style whiteboard sketch. Simple stick figures and basic shapes. Rough hand-drawn lines, no perfection. Minimalist backgrounds. Focused on concept clarity over aesthetics. Humorous and accessible. Like ideas drawn on a whiteboard during a technical discussion.",
+  "key_principles": [
+    "极简风格",
+    "手绘感笔迹",
+    "复杂概念简化",
+    "幽默感"
+  ]
+}

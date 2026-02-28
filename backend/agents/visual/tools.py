@@ -2,96 +2,155 @@
 视觉总监 Agent (Visual) 工具函数
 """
 
-from typing import List, Dict, Any
+import json
+from typing import List, Dict, Any, Optional
 
 
-def calculate_text_length(content: Dict) -> int:
-    """计算内容的文本长度"""
-    main_text = content.get("main_text", "")
-    bullet_points = content.get("bullet_points", [])
-    supporting_text = content.get("supporting_text", "")
-    
-    total = len(str(main_text)) + len(str(supporting_text))
-    total += sum(len(str(p)) for p in bullet_points)
-    
-    return total
-
-
-def suggest_layout_from_content(slide: Dict) -> str:
-    """根据内容建议布局"""
-    content = slide.get("content", {})
-    layout_intent = slide.get("layout_intent", "")
-    visual_needs = slide.get("visual_needs", {})
-    
-    text_length = calculate_text_length(content)
-    
-    # 根据布局意图
-    if layout_intent in ["cover", "title_slide"]:
-        return "title_slide"
-    
-    if layout_intent in ["quote"]:
-        return "blank"
-    
-    if layout_intent in ["conclusion"]:
-        return "bullet_list"
-    
-    # 根据视觉需求
-    if visual_needs.get("needs_chart"):
-        return "two_content"
-    
-    if visual_needs.get("needs_image"):
-        return "picture_with_caption"
-    
-    # 根据文本长度
-    if text_length < 50:
-        return "blank"  # 大字号居中
-    elif text_length < 150:
-        return "bullet_list"
-    else:
-        return "two_content"  # 双栏
-
-
-def create_slides_summary(slides_data: List[Dict]) -> List[Dict]:
-    """创建幻灯片内容摘要"""
+def create_slides_summary_for_visual(slides_data: List[Dict]) -> str:
+    """
+    为 Visual agent 创建幻灯片内容摘要（JSON 格式）。
+    包含 visual_type、path_hint、image_prompt、text_to_render 等关键字段。
+    """
     summaries = []
-    
+
     for slide in slides_data:
         content = slide.get("content", {})
-        text_length = calculate_text_length(content)
-        
         summaries.append({
+            "page_number": slide.get("page_number"),
+            "title": slide.get("title"),
+            "visual_type": slide.get("visual_type", "illustration"),
+            "path_hint": slide.get("path_hint", "auto"),
+            "layout_intent": slide.get("layout_intent", "bullet_points"),
+            "bullet_points": content.get("bullet_points", []),
+            "main_text": content.get("main_text"),
+            "image_prompt_draft": slide.get("image_prompt"),  # Writer's draft
+            "text_to_render": slide.get("text_to_render", {}),
+            "speaker_notes": slide.get("speaker_notes", ""),
+        })
+
+    return json.dumps(summaries, ensure_ascii=False, indent=2)
+
+
+def determine_render_path(slide: Dict, style_config: Dict) -> str:
+    """
+    Determine the render path for a slide based on its properties and style config.
+    Returns "path_a" or "path_b".
+    """
+    path_hint = slide.get("path_hint", "auto")
+    visual_type = slide.get("visual_type", "illustration")
+    style_render_paths = style_config.get("render_paths", ["path_a"])
+
+    # Explicit path_hint takes priority (except "auto")
+    if path_hint == "path_b":
+        # Only use path_b if style supports it
+        if "path_b" in style_render_paths:
+            return "path_b"
+        return "path_a"  # Fallback if style doesn't support path_b
+
+    if path_hint == "path_a":
+        return "path_a"
+
+    # Auto-decide based on visual_type and style
+    if visual_type in ("chart", "data", "flow"):
+        return "path_a"  # Precise layout needed
+
+    if visual_type in ("illustration", "cover") and "path_b" in style_render_paths:
+        return "path_b"
+
+    if visual_type == "quote":
+        # Quote works in both paths; prefer path_b for dramatic styles
+        if "path_b" in style_render_paths and "path_a" not in style_render_paths:
+            return "path_b"
+        return "path_a"
+
+    return "path_a"  # Safe default
+
+
+def build_default_html(slide: Dict, style_config: Dict) -> str:
+    """
+    Generate a minimal valid Path A HTML for a slide using style_config colors.
+    Used as fallback when LLM generation fails.
+    """
+    colors = style_config.get("colors", {})
+    bg = colors.get("background", "#FFFFFF")
+    text = colors.get("text", "#1A1A1A")
+    accent = colors.get("accent", "#0984E3")
+
+    title = slide.get("title", "")
+    text_to_render = slide.get("text_to_render", {})
+    display_title = text_to_render.get("title") or title
+    bullets = text_to_render.get("bullets") or slide.get("content", {}).get("bullet_points", [])
+
+    bullet_items = "".join(f"<li>{b}</li>" for b in bullets[:4])
+    bullet_html = f"""
+  <div style="position: absolute; top: 120pt; left: 48pt; right: 48pt;">
+    <ul style="font-size: 14pt; color: {text}; padding-left: 20pt; list-style: disc; line-height: 1.8;">
+      {bullet_items}
+    </ul>
+  </div>""" if bullet_items else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    width: 720pt; height: 405pt;
+    font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+    background: {bg};
+    overflow: hidden;
+  }}
+</style>
+</head>
+<body>
+  <div style="position: absolute; top: 4pt; left: 0; right: 0; height: 5pt; background: {accent};"></div>
+  <div style="position: absolute; top: 32pt; left: 48pt; right: 48pt;">
+    <h1 style="font-size: 28pt; color: {text}; font-weight: 700; line-height: 1.3;">{display_title}</h1>
+  </div>
+  {bullet_html}
+</body>
+</html>"""
+
+
+def apply_default_visual_design(slides_data: List[Dict], style_config: Dict) -> List[Dict]:
+    """
+    Apply default visual design when LLM generation fails.
+    Returns slide_render_plans (new list, no mutation).
+    """
+    plans = []
+    for slide in slides_data:
+        render_path = determine_render_path(slide, style_config)
+        colors = style_config.get("colors", {})
+
+        plan = {
+            "page_number": slide.get("page_number"),
+            "render_path": render_path,
+            "layout_name": "bullet_list",
+            "html_content": build_default_html(slide, style_config) if render_path == "path_a" else None,
+            "image_prompt": slide.get("image_prompt") if render_path == "path_b" else None,
+            "style_notes": f"Fallback: {render_path} selected based on visual_type={slide.get('visual_type')}",
+            "color_system": {
+                "background": colors.get("background", "#FFFFFF"),
+                "text": colors.get("text", "#1A1A1A"),
+                "accent": colors.get("accent", "#0984E3"),
+            },
+        }
+        plans.append(plan)
+
+    return plans
+
+
+# Keep old function signature for backward compatibility
+def create_slides_summary(slides_data: List[Dict]) -> List[Dict]:
+    """Legacy: create simple slide summaries (for backward compat)."""
+    return [
+        {
             "page": slide.get("page_number"),
             "title": slide.get("title"),
+            "visual_type": slide.get("visual_type", "illustration"),
+            "path_hint": slide.get("path_hint", "auto"),
             "layout_intent": slide.get("layout_intent"),
-            "text_length": text_length,
-            "visual_needs": slide.get("visual_needs", {})
-        })
-    
-    return summaries
-
-
-def apply_default_visual_design(slides_data: List[Dict]) -> List[Dict]:
-    """应用默认视觉设计"""
-    for slide in slides_data:
-        layout_name = suggest_layout_from_content(slide)
-        slide["layout_id"] = get_layout_id(layout_name)
-        slide["layout_name"] = layout_name
-        slide["visual_elements"] = []
-    
-    return slides_data
-
-
-def get_layout_id(layout_name: str) -> int:
-    """获取布局 ID"""
-    layout_map = {
-        "title_slide": 0,
-        "bullet_list": 1,
-        "section_header": 2,
-        "two_content": 3,
-        "comparison": 4,
-        "title_only": 5,
-        "blank": 6,
-        "content_with_caption": 7,
-        "picture_with_caption": 8,
-    }
-    return layout_map.get(layout_name, 1)
+        }
+        for slide in slides_data
+    ]

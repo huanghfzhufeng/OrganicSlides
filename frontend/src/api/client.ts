@@ -3,6 +3,29 @@ const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 // ==================== 类型定义 ====================
 
+export interface StyleColors {
+    primary: string;
+    secondary: string;
+    background: string;
+    text: string;
+    accent: string;
+    additional?: string[];
+}
+
+export interface Style {
+    id: string;
+    name_zh: string;
+    name_en: string;
+    tier: number | 'editorial';
+    description?: string;
+    colors?: StyleColors;
+    typography?: { title_size: string; body_size: string; family: string };
+    use_cases: string[];
+    sample_image_path?: string;
+    sample_image_url?: string;
+    render_paths: string[];
+}
+
 export interface ProjectResponse {
     session_id: string;
     status: string;
@@ -107,14 +130,14 @@ export const api = {
     },
 
     // 项目
-    createProject: async (prompt: string, style: string = 'organic'): Promise<ProjectResponse> => {
+    createProject: async (prompt: string, styleId?: string): Promise<ProjectResponse> => {
         const response = await fetch(`${API_BASE_URL}/project/create`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 ...tokenManager.getHeaders()
             },
-            body: JSON.stringify({ prompt, style }),
+            body: JSON.stringify({ prompt, style_id: styleId ?? null, style: 'organic' }),
         });
         if (!response.ok) throw new Error('Failed to create project');
         return response.json();
@@ -157,5 +180,46 @@ export const api = {
 
     getResumeWorkflowUrl: (sessionId: string) => {
         return `${API_BASE_URL}/workflow/resume/${sessionId}`;
-    }
+    },
+
+    // 更新会话风格（在大纲确认后、恢复工作流前调用）
+    updateSessionStyle: async (sessionId: string, styleId: string, renderPathPreference?: string): Promise<void> => {
+        const response = await fetch(`${API_BASE_URL}/project/style`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...tokenManager.getHeaders()
+            },
+            body: JSON.stringify({
+                session_id: sessionId,
+                style_id: styleId,
+                render_path_preference: renderPathPreference ?? 'auto',
+            }),
+        });
+        if (!response.ok) throw new Error('Failed to update session style');
+    },
+
+    // 风格
+    getStyles: async (): Promise<Style[]> => {
+        const response = await fetch(`${API_BASE_URL}/styles`);
+        if (!response.ok) throw new Error('Failed to fetch styles');
+        const data = await response.json();
+        // Backend returns { styles: [...], total: N }
+        return Array.isArray(data) ? data : (data.styles ?? []);
+    },
+
+    getStyleSample: (styleId: string): string => {
+        return `${API_BASE_URL}/styles/${styleId}/sample`;
+    },
+
+    getStyleRecommendations: async (intent: string): Promise<string[]> => {
+        const encoded = encodeURIComponent(intent);
+        const response = await fetch(`${API_BASE_URL}/styles/recommend?intent=${encoded}`);
+        if (!response.ok) throw new Error('Failed to fetch style recommendations');
+        const data = await response.json();
+        // Backend returns { recommended: [{id, ...}], intent }
+        if (Array.isArray(data)) return data;
+        if (data.recommended) return (data.recommended as Array<{ id: string }>).map((s) => s.id);
+        return [];
+    },
 };

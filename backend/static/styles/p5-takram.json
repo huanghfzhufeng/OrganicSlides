@@ -1,0 +1,38 @@
+{
+  "id": "p5-takram",
+  "name_zh": "Takram Speculative日式思辨风",
+  "name_en": "Takram Speculative",
+  "tier": "editorial",
+  "description": "东方哲学派。技术是思考的媒介。柔和科技感，概念原型图作为核心视觉。",
+  "colors": {
+    "primary": "#F5F3EF",
+    "secondary": "#3D3D3D",
+    "background": "#F5F3EF",
+    "text": "#3D3D3D",
+    "accent": "#8B9D77"
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "14pt",
+    "family": "Rounded sans-serif (warm)"
+  },
+  "use_cases": [
+    "设计思维",
+    "产品愿景",
+    "战略规划",
+    "创新展示",
+    "思想文章"
+  ],
+  "sample_image_path": "/static/styles/samples/style-p5-takram.png",
+  "render_paths": ["path_a"],
+  "base_style_prompt": "Warm gray background (#F5F3EF). Soft shadows (blur 20px+). Rounded corners (16px+). Concept diagrams as core visual. Flowcharts as art. Soft gradients. Hand-drawn style icons. Card-based layout. Thoughtful technology aesthetics — not aggressive, not playful.",
+  "key_principles": [
+    "柔和阴影",
+    "圆角设计",
+    "概念图优先",
+    "流程图艺术化",
+    "温暖色调"
+  ],
+  "path_note": "Path A exclusive (HTML→PPTX). Soft shadow and card effects require CSS control.",
+  "philosophy": "技术是思考的媒介。用柔和的科技感和概念原型图传达深度思考。"
+}
