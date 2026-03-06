@@ -20,6 +20,7 @@ Examples:
 
 - `codex/req-001-build-baseline`
 - `codex/req-002-ci-branch-protection`
+- `codex/req-003-release-templates`
 - `codex/req-014-style-packet`
 
 ## 2. Phase 0: Governance and Baseline
@@ -27,7 +28,8 @@ Examples:
 - [x] `REQ-001` Repair frontend build, frontend tests, backend tests, and type errors.
 - [x] `REQ-002` Define required CI checks and enforce branch protection for `main`.
   Validation completed on `2026-03-07` with protected checks `frontend-build`, `frontend-tests`, and `backend-tests`.
-- [ ] `REQ-003` Add PR template, rollback template, and release checklist template.
+- [x] `REQ-003` Add PR template, rollback template, and release checklist template.
+  Added `.github/pull_request_template.md`, `docs/templates/rollback-template.md`, and `docs/templates/release-checklist-template.md` on `2026-03-07`.
 
 ## 3. Phase 1: Correctness and Runtime Stability
 
