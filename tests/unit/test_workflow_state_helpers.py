@@ -71,9 +71,11 @@ class TestWorkflowStateHelpers:
     async def test_save_session_state_persists_before_refreshing_cache(self, monkeypatch):
         state = {"current_status": "created"}
         persist_state = AsyncMock(return_value=state)
+        sync_project = AsyncMock()
         refresh_cache = AsyncMock()
 
         monkeypatch.setattr(main, "save_workflow_state", persist_state)
+        monkeypatch.setattr(main, "sync_project_state", sync_project)
         monkeypatch.setattr(main, "_cache_session_state", refresh_cache)
 
         result = await main._save_session_state("session-4", state, project_id="11111111-1111-1111-1111-111111111111")
@@ -84,6 +86,7 @@ class TestWorkflowStateHelpers:
             state,
             project_id="11111111-1111-1111-1111-111111111111",
         )
+        sync_project.assert_awaited_once_with("session-4", state)
         refresh_cache.assert_awaited_once_with("session-4", state)
 
     @pytest.mark.asyncio
@@ -91,15 +94,18 @@ class TestWorkflowStateHelpers:
         updates = {"current_status": "rendering"}
         merged = {"current_status": "rendering", "current_agent": "renderer"}
         update_state = AsyncMock(return_value=merged)
+        sync_project = AsyncMock()
         refresh_cache = AsyncMock()
 
         monkeypatch.setattr(main, "update_workflow_state", update_state)
+        monkeypatch.setattr(main, "sync_project_state", sync_project)
         monkeypatch.setattr(main, "_cache_session_state", refresh_cache)
 
         result = await main._merge_session_state("session-5", updates)
 
         assert result == merged
         update_state.assert_awaited_once_with("session-5", updates)
+        sync_project.assert_awaited_once_with("session-5", merged)
         refresh_cache.assert_awaited_once_with("session-5", merged)
 
     @pytest.mark.asyncio

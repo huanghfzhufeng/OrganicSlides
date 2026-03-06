@@ -32,6 +32,7 @@ class TestStylesAPI:
         self.client = TestClient(self.app)
         self.monkeypatch = monkeypatch
         self.session_store = {}
+        self.revisions = []
 
         async def fake_load_session_state(session_id):
             return self.session_store.get(session_id)
@@ -48,9 +49,20 @@ class TestStylesAPI:
             self.session_store[session_id] = merged
             return merged
 
+        async def fake_create_project_revision(session_id, revision_type, state, project_id=None):
+            revision = {
+                "session_id": session_id,
+                "revision_type": revision_type,
+                "state": dict(state),
+                "project_id": project_id,
+            }
+            self.revisions.append(revision)
+            return revision
+
         monkeypatch.setattr(main, "_load_session_state", fake_load_session_state)
         monkeypatch.setattr(main, "_save_session_state", fake_save_session_state)
         monkeypatch.setattr(main, "_merge_session_state", fake_merge_session_state)
+        monkeypatch.setattr(main, "create_project_revision", fake_create_project_revision)
 
         yield
 
@@ -98,6 +110,19 @@ class TestStylesAPI:
         data = response.json()
         assert "session_id" in data
         assert self.session_store[data["session_id"]]["user_intent"] == "Test presentation"
+
+    def test_project_create_records_initial_revision(self):
+        """Test project creation records an initial revision snapshot"""
+        response = self.client.post(
+            "/api/v1/project/create",
+            json={"prompt": "Record initial revision"}
+        )
+        assert response.status_code == 200
+        session_id = response.json()["session_id"]
+
+        assert len(self.revisions) == 1
+        assert self.revisions[0]["session_id"] == session_id
+        assert self.revisions[0]["revision_type"] == "project_created"
 
     def test_project_create_returns_valid_session_id(self):
         """Test that session_id is a valid UUID"""
@@ -155,6 +180,49 @@ class TestStylesAPI:
         data = response.json()
         assert data["outline"] == []
         assert data["status"] == "initialized"
+
+    def test_update_outline_records_revision(self):
+        """Test outline updates create a new revision snapshot"""
+        create_response = self.client.post(
+            "/api/v1/project/create",
+            json={"prompt": "Outline test"}
+        )
+        session_id = create_response.json()["session_id"]
+        self.revisions.clear()
+
+        outline = [{"id": "1", "title": "Test assertion", "type": "content"}]
+        response = self.client.post(
+            "/api/v1/workflow/outline/update",
+            json={"session_id": session_id, "outline": outline}
+        )
+
+        assert response.status_code == 200
+        assert self.revisions[-1]["session_id"] == session_id
+        assert self.revisions[-1]["revision_type"] == "outline_updated"
+        assert self.revisions[-1]["state"]["outline"] == outline
+
+    def test_update_project_style_records_revision(self):
+        """Test style updates create a new revision snapshot"""
+        create_response = self.client.post(
+            "/api/v1/project/create",
+            json={"prompt": "Style revision test"}
+        )
+        session_id = create_response.json()["session_id"]
+        self.revisions.clear()
+
+        response = self.client.post(
+            "/api/v1/project/style",
+            json={
+                "session_id": session_id,
+                "style_id": "01-snoopy",
+                "render_path_preference": "path_a",
+            }
+        )
+
+        assert response.status_code == 200
+        assert self.revisions[-1]["session_id"] == session_id
+        assert self.revisions[-1]["revision_type"] == "style_updated"
+        assert self.revisions[-1]["state"]["theme_config"]["style_id"] == "01-snoopy"
 
     def test_project_create_with_custom_style(self):
         """Test creating project with different styles"""
