@@ -33,20 +33,24 @@ class TestStylesAPI:
         self.monkeypatch = monkeypatch
         self.session_store = {}
 
-        async def fake_set_session(session_id, data, ttl=86400):
-            self.session_store[session_id] = data
-
-        async def fake_get_session(session_id):
+        async def fake_load_session_state(session_id):
             return self.session_store.get(session_id)
 
-        async def fake_update_session(session_id, updates):
-            current = self.session_store.get(session_id, {})
-            current.update(updates)
-            self.session_store[session_id] = current
+        async def fake_save_session_state(session_id, state, project_id=None):
+            self.session_store[session_id] = dict(state)
+            return self.session_store[session_id]
 
-        monkeypatch.setattr(main.redis_client, "set_session", fake_set_session)
-        monkeypatch.setattr(main.redis_client, "get_session", fake_get_session)
-        monkeypatch.setattr(main.redis_client, "update_session", fake_update_session)
+        async def fake_merge_session_state(session_id, updates):
+            current = self.session_store.get(session_id)
+            if current is None:
+                return None
+            merged = {**current, **updates}
+            self.session_store[session_id] = merged
+            return merged
+
+        monkeypatch.setattr(main, "_load_session_state", fake_load_session_state)
+        monkeypatch.setattr(main, "_save_session_state", fake_save_session_state)
+        monkeypatch.setattr(main, "_merge_session_state", fake_merge_session_state)
 
         yield
 

@@ -4,6 +4,7 @@ FastAPI 后端服务 - 集成数据库和认证
 """
 
 import asyncio
+import logging
 import uuid
 import json
 from pathlib import Path
@@ -23,9 +24,78 @@ from graph import get_main_app, get_resume_app
 from database.postgres import get_db, init_db, close_db
 from database.redis_client import redis_client
 from database.models import User, Project
+from database.workflow_state_store import (
+    load_workflow_state,
+    save_workflow_state,
+    update_workflow_state,
+)
 from auth import auth_router, get_current_user, get_current_active_user
 from styles.registry import get_registry
 from styles.recommender import StyleRecommender
+
+logger = logging.getLogger(__name__)
+
+
+async def _cache_session_state(session_id: str, state: dict) -> None:
+    """Best-effort Redis cache write for workflow state."""
+    try:
+        await redis_client.set_session(session_id, state)
+    except Exception:
+        logger.debug("Skipping Redis cache write for session %s", session_id, exc_info=True)
+
+
+async def _load_session_state(session_id: str) -> Optional[dict]:
+    """Load workflow state from durable DB first, then fall back to Redis cache."""
+    try:
+        state = await load_workflow_state(session_id)
+    except Exception:
+        logger.warning(
+            "Workflow state DB read failed for session %s; falling back to Redis cache",
+            session_id,
+            exc_info=True,
+        )
+        try:
+            return await redis_client.get_session(session_id)
+        except Exception:
+            return None
+
+    if state:
+        await _cache_session_state(session_id, state)
+        return state
+
+    try:
+        return await redis_client.get_session(session_id)
+    except Exception:
+        return None
+
+
+async def _save_session_state(
+    session_id: str,
+    state: dict,
+    project_id: Optional[str] = None,
+) -> dict:
+    """Persist workflow state durably, then refresh the Redis cache."""
+    persisted = await save_workflow_state(session_id, state, project_id=project_id)
+    await _cache_session_state(session_id, persisted)
+    return persisted
+
+
+async def _merge_session_state(session_id: str, updates: dict) -> Optional[dict]:
+    """Merge workflow state updates into durable storage and refresh cache."""
+    persisted = await update_workflow_state(session_id, updates)
+    if persisted is None:
+        return None
+
+    await _cache_session_state(session_id, persisted)
+    return persisted
+
+
+async def _append_session_log(session_id: str, data: dict) -> None:
+    """Best-effort Redis log write; logs remain non-critical for persistence."""
+    try:
+        await redis_client.push_log(session_id, data)
+    except Exception:
+        logger.debug("Skipping Redis log write for session %s", session_id, exc_info=True)
 
 
 @asynccontextmanager
@@ -143,14 +213,13 @@ async def generate_sse_events(session_id: str, state: PresentationState):
                 }
                 yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
                 
-                # 更新 Redis 缓存
-                await redis_client.update_session(session_id, node_output)
-                await redis_client.push_log(session_id, data)
+                await _merge_session_state(session_id, node_output)
+                await _append_session_log(session_id, data)
                 
                 await asyncio.sleep(0.1)
         
         # 获取最终状态
-        final_state = await redis_client.get_session(session_id) or {}
+        final_state = await _load_session_state(session_id) or {}
         
         if final_state.get("current_status") == "waiting_for_outline_approval":
             yield f"data: {json.dumps({'type': 'hitl', 'status': 'waiting_for_approval', 'outline': final_state.get('outline', [])}, ensure_ascii=False)}\n\n"
@@ -164,13 +233,14 @@ async def generate_sse_events(session_id: str, state: PresentationState):
 async def generate_resume_sse_events(session_id: str):
     """生成恢复阶段的 SSE 事件流"""
     resume_app = get_resume_app()
-    state = await redis_client.get_session(session_id)
+    state = await _load_session_state(session_id)
 
     if not state:
         yield f"data: {json.dumps({'type': 'error', 'message': 'Session not found'}, ensure_ascii=False)}\n\n"
         return
 
     state["outline_approved"] = True
+    await _save_session_state(session_id, state)
 
     config = {"configurable": {"thread_id": f"{session_id}_resume"}}
 
@@ -200,11 +270,11 @@ async def generate_resume_sse_events(session_id: str):
                 for rpe in render_progress_events:
                     yield f"data: {json.dumps(rpe, ensure_ascii=False)}\n\n"
 
-                await redis_client.update_session(session_id, node_output)
-                await redis_client.push_log(session_id, data)
+                await _merge_session_state(session_id, node_output)
+                await _append_session_log(session_id, data)
                 await asyncio.sleep(0.1)
 
-        final_state = await redis_client.get_session(session_id) or {}
+        final_state = await _load_session_state(session_id) or {}
         pptx_path = final_state.get("pptx_path", "")
 
         yield f"data: {json.dumps({'type': 'complete', 'status': 'done', 'pptx_path': pptx_path}, ensure_ascii=False)}\n\n"
@@ -335,8 +405,8 @@ async def create_project(
         style_config=style_config,
     )
 
-    # 保存到 Redis
-    await redis_client.set_session(session_id, state)
+    # 保存到持久化工作流状态存储
+    await _save_session_state(session_id, state)
 
     # 如果用户已登录，保存到数据库
     if current_user:
@@ -349,6 +419,7 @@ async def create_project(
         )
         db.add(db_project)
         await db.commit()
+        await _save_session_state(session_id, state, project_id=str(db_project.id))
 
     return {"session_id": session_id, "status": "created"}
 
@@ -358,7 +429,7 @@ async def start_workflow(session_id: str):
     """
     启动工作流（SSE 流式响应）
     """
-    state = await redis_client.get_session(session_id)
+    state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     
@@ -376,7 +447,7 @@ async def start_workflow(session_id: str):
 @app.get("/api/v1/workflow/outline/{session_id}")
 async def get_outline(session_id: str):
     """获取生成的大纲"""
-    state = await redis_client.get_session(session_id)
+    state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     
@@ -394,12 +465,11 @@ async def update_outline(
     """
     HITL 接口：用户修改大纲
     """
-    state = await redis_client.get_session(data.session_id)
+    state = await _load_session_state(data.session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    # 更新 Redis
-    await redis_client.update_session(data.session_id, {
+    await _merge_session_state(data.session_id, {
         "outline": data.outline,
         "outline_approved": True
     })
@@ -425,7 +495,7 @@ async def update_project_style(data: StyleUpdate):
     created (step 0) and outline approved (step 2). This endpoint lets
     the frontend attach the chosen style before resuming generation.
     """
-    state = await redis_client.get_session(data.session_id)
+    state = await _load_session_state(data.session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -441,7 +511,7 @@ async def update_project_style(data: StyleUpdate):
     if render_pref not in ("auto", "path_a", "path_b"):
         render_pref = "auto"
 
-    await redis_client.update_session(data.session_id, {
+    await _merge_session_state(data.session_id, {
         "theme_config": {
             "style_id": data.style_id,
             "style": style_config.get("id", data.style_id),
@@ -469,7 +539,7 @@ async def resume_workflow(session_id: str):
     """
     恢复工作流（用户确认大纲后）
     """
-    state = await redis_client.get_session(session_id)
+    state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     
@@ -487,7 +557,7 @@ async def resume_workflow(session_id: str):
 @app.get("/api/v1/project/download/{session_id}")
 async def download_pptx(session_id: str):
     """下载生成的 PPTX 文件"""
-    state = await redis_client.get_session(session_id)
+    state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     
@@ -505,7 +575,7 @@ async def download_pptx(session_id: str):
 @app.get("/api/v1/project/status/{session_id}")
 async def get_project_status(session_id: str):
     """获取项目状态"""
-    state = await redis_client.get_session(session_id)
+    state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     

@@ -8,9 +8,8 @@ LangGraph 工作流编排
 
 from typing import Literal
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 
-from state import PresentationState, create_initial_state
+from state import PresentationState
 from agents import (
     researcher_agent,
     planner_agent,
@@ -286,20 +285,10 @@ def create_workflow() -> StateGraph:
 def create_app():
     """
     创建可执行的 LangGraph 应用
-    带有检查点支持，用于 HITL 中断和恢复
+    使用无状态编译结果；工作流状态由外部持久化层负责保存。
     """
     workflow = create_workflow()
-
-    # 使用内存检查点（生产环境应使用 PostgreSQL）
-    memory = MemorySaver()
-
-    # 编译工作流
-    app = workflow.compile(
-        checkpointer=memory,
-        interrupt_before=["wait_for_approval"]  # 在等待确认前中断
-    )
-
-    return app
+    return workflow.compile()
 
 
 def create_resume_workflow() -> StateGraph:
@@ -327,8 +316,7 @@ def create_resume_workflow() -> StateGraph:
 def create_resume_app():
     """创建恢复阶段的应用"""
     workflow = create_resume_workflow()
-    memory = MemorySaver()
-    return workflow.compile(checkpointer=memory)
+    return workflow.compile()
 
 
 # 全局应用实例
