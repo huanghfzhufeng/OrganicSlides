@@ -43,37 +43,9 @@ from styles.recommender import StyleRecommender
 logger = logging.getLogger(__name__)
 
 
-async def _cache_session_state(session_id: str, state: dict) -> None:
-    """Best-effort Redis cache write for workflow state."""
-    try:
-        await redis_client.set_session(session_id, state)
-    except Exception:
-        logger.debug("Skipping Redis cache write for session %s", session_id, exc_info=True)
-
-
 async def _load_session_state(session_id: str) -> Optional[dict]:
-    """Load workflow state from durable DB first, then fall back to Redis cache."""
-    try:
-        state = await load_workflow_state(session_id)
-    except Exception:
-        logger.warning(
-            "Workflow state DB read failed for session %s; falling back to Redis cache",
-            session_id,
-            exc_info=True,
-        )
-        try:
-            return await redis_client.get_session(session_id)
-        except Exception:
-            return None
-
-    if state:
-        await _cache_session_state(session_id, state)
-        return state
-
-    try:
-        return await redis_client.get_session(session_id)
-    except Exception:
-        return None
+    """Load workflow state from durable PostgreSQL storage only."""
+    return await load_workflow_state(session_id)
 
 
 async def _save_session_state(
@@ -81,30 +53,39 @@ async def _save_session_state(
     state: dict,
     project_id: Optional[str] = None,
 ) -> dict:
-    """Persist workflow state durably, then refresh the Redis cache."""
+    """Persist workflow state durably and synchronize the Project snapshot."""
     persisted = await save_workflow_state(session_id, state, project_id=project_id)
     await sync_project_state(session_id, persisted)
-    await _cache_session_state(session_id, persisted)
     return persisted
 
 
 async def _merge_session_state(session_id: str, updates: dict) -> Optional[dict]:
-    """Merge workflow state updates into durable storage and refresh cache."""
+    """Merge workflow state updates into durable storage."""
     persisted = await update_workflow_state(session_id, updates)
     if persisted is None:
         return None
 
     await sync_project_state(session_id, persisted)
-    await _cache_session_state(session_id, persisted)
     return persisted
 
 
-async def _append_session_log(session_id: str, data: dict) -> None:
-    """Best-effort Redis log write; logs remain non-critical for persistence."""
+async def _connect_optional_redis() -> bool:
+    """Connect Redis if available without making startup depend on it."""
     try:
-        await redis_client.push_log(session_id, data)
+        await redis_client.connect()
+        logger.info("Redis connection established")
+        return True
     except Exception:
-        logger.debug("Skipping Redis log write for session %s", session_id, exc_info=True)
+        logger.warning("Redis unavailable; continuing without it", exc_info=True)
+        return False
+
+
+async def _disconnect_optional_redis() -> None:
+    """Disconnect Redis if it was available during runtime."""
+    try:
+        await redis_client.disconnect()
+    except Exception:
+        logger.warning("Redis disconnect failed during shutdown", exc_info=True)
 
 
 @asynccontextmanager
@@ -112,18 +93,19 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     print("🚀 MAS-PPT 系统启动中...")
     
-    # 连接 Redis
-    await redis_client.connect()
-    print("✅ Redis 连接成功")
-    
     # 初始化数据库
     await init_db()
     print("✅ PostgreSQL 数据库初始化完成")
+
+    if await _connect_optional_redis():
+        print("✅ Redis 连接成功")
+    else:
+        print("⚠️ Redis 不可用，系统以 PostgreSQL-only 模式运行")
     
     yield
     
     # 关闭连接
-    await redis_client.disconnect()
+    await _disconnect_optional_redis()
     await close_db()
     print("👋 MAS-PPT 系统关闭")
 
@@ -225,7 +207,6 @@ async def generate_sse_events(session_id: str, state: PresentationState):
                 persisted_state = await _merge_session_state(session_id, node_output) or dict(state)
                 await update_generation_job(job_id, state=persisted_state, status=status)
                 await record_job_event(session_id, data["type"], data, job_id=job_id)
-                await _append_session_log(session_id, data)
                 yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
                 
                 await asyncio.sleep(0.1)
@@ -314,7 +295,6 @@ async def generate_resume_sse_events(session_id: str):
                     await record_job_event(session_id, rpe.get("type", "render_progress"), rpe, job_id=job_id)
                     yield f"data: {json.dumps(rpe, ensure_ascii=False)}\n\n"
 
-                await _append_session_log(session_id, data)
                 await asyncio.sleep(0.1)
 
         final_state = await _load_session_state(session_id) or {}
