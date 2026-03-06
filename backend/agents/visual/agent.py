@@ -12,8 +12,11 @@ from agents.visual.prompts import VISUAL_SYSTEM_PROMPT, VISUAL_USER_TEMPLATE
 from agents.visual.tools import (
     create_slides_summary_for_visual,
     apply_default_visual_design,
+    build_default_html,
+    build_default_image_prompt,
 )
 from agents.base import get_llm, create_system_message
+from rendering_policy import enforce_render_path_preference
 
 
 async def run(state: dict) -> dict[str, Any]:
@@ -24,8 +27,7 @@ async def run(state: dict) -> dict[str, Any]:
     llm = get_llm(model="gpt-4o", temperature=0.5)
 
     slides_data = state.get("slides_data", [])
-    style_config = state.get("style_config", {})
-    style_id = state.get("style_id", "")
+    style_config = state.get("style_config") or state.get("theme_config", {})
 
     if not slides_data:
         return {
@@ -96,14 +98,27 @@ def _parse_visual_response(content: str, slides_data: list, style_config: dict) 
 
         # Validate that each plan has required fields; fill defaults if missing
         validated = []
-        for plan in plans:
-            render_path = plan.get("render_path", "path_a")
+        for index, plan in enumerate(plans):
+            slide = slides_data[index] if index < len(slides_data) else {}
+            render_path = enforce_render_path_preference(
+                plan.get("render_path", "path_a"),
+                style_config,
+            )
+            html_content = plan.get("html_content")
+            image_prompt = plan.get("image_prompt")
+            if render_path == "path_a" and not html_content:
+                html_content = build_default_html(slide, style_config)
+            if render_path == "path_b" and not image_prompt:
+                image_prompt = build_default_image_prompt(slide, style_config)
+
             validated.append({
-                "page_number": plan.get("page_number"),
+                "page_number": plan.get("page_number") or slide.get("page_number"),
                 "render_path": render_path,
                 "layout_name": plan.get("layout_name", "bullet_list"),
-                "html_content": plan.get("html_content"),
-                "image_prompt": plan.get("image_prompt"),
+                "title": slide.get("title", ""),
+                "content": slide.get("content", {}),
+                "html_content": html_content if render_path == "path_a" else None,
+                "image_prompt": image_prompt if render_path == "path_b" else None,
                 "style_notes": plan.get("style_notes", ""),
                 "color_system": plan.get("color_system", {}),
             })

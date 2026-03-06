@@ -225,6 +225,8 @@ class TestStylesAPI:
         assert self.revisions[-1]["session_id"] == session_id
         assert self.revisions[-1]["revision_type"] == "style_updated"
         assert self.revisions[-1]["state"]["theme_config"]["style_id"] == "01-snoopy"
+        assert self.session_store[session_id]["style_config"]["render_path_preference"] == "path_a"
+        assert self.session_store[session_id]["style_config"]["render_paths"] == ["path_a"]
 
     def test_project_create_with_custom_style(self):
         """Test creating project with different styles"""

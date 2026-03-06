@@ -5,6 +5,8 @@
 import json
 from typing import List, Dict, Any, Optional
 
+from rendering_policy import effective_render_paths, enforce_render_path_preference
+
 
 def create_slides_summary_for_visual(slides_data: List[Dict]) -> str:
     """
@@ -38,7 +40,11 @@ def determine_render_path(slide: Dict, style_config: Dict) -> str:
     """
     path_hint = slide.get("path_hint", "auto")
     visual_type = slide.get("visual_type", "illustration")
-    style_render_paths = style_config.get("render_paths", ["path_a"])
+    style_render_paths = effective_render_paths(style_config)
+
+    preferred_path = enforce_render_path_preference("auto", style_config)
+    if preferred_path in ("path_a", "path_b"):
+        return preferred_path
 
     # Explicit path_hint takes priority (except "auto")
     if path_hint == "path_b":
@@ -64,6 +70,27 @@ def determine_render_path(slide: Dict, style_config: Dict) -> str:
         return "path_a"
 
     return "path_a"  # Safe default
+
+
+def build_default_image_prompt(slide: Dict, style_config: Dict) -> str:
+    """Generate a basic Path B prompt when the upstream agent did not provide one."""
+    explicit_prompt = slide.get("image_prompt")
+    if explicit_prompt:
+        return explicit_prompt
+
+    title = slide.get("title") or slide.get("text_to_render", {}).get("title") or "presentation slide"
+    bullet_points = slide.get("content", {}).get("bullet_points", [])
+    bullet_summary = ", ".join(str(point) for point in bullet_points[:4])
+    style_name = (
+        style_config.get("name_en")
+        or style_config.get("name_zh")
+        or style_config.get("id")
+        or "professional presentation"
+    )
+
+    if bullet_summary:
+        return f"{style_name} slide illustration for '{title}', visualizing: {bullet_summary}"
+    return f"{style_name} slide illustration for '{title}'"
 
 
 def build_default_html(slide: Dict, style_config: Dict) -> str:
@@ -128,7 +155,7 @@ def apply_default_visual_design(slides_data: List[Dict], style_config: Dict) -> 
             "render_path": render_path,
             "layout_name": "bullet_list",
             "html_content": build_default_html(slide, style_config) if render_path == "path_a" else None,
-            "image_prompt": slide.get("image_prompt") if render_path == "path_b" else None,
+            "image_prompt": build_default_image_prompt(slide, style_config) if render_path == "path_b" else None,
             "style_notes": f"Fallback: {render_path} selected based on visual_type={slide.get('visual_type')}",
             "color_system": {
                 "background": colors.get("background", "#FFFFFF"),
