@@ -108,3 +108,37 @@ WRITER_USER_TEMPLATE = """请根据以下大纲，为每个章节撰写幻灯片
 6. speaker_notes 要详细（演讲者扩展讲解用）
 
 请为每个章节生成详细的幻灯片内容，输出 JSON 数组格式。"""
+
+
+WRITER_REPAIR_SYSTEM_PROMPT = """你是演示文稿撰稿输出的 JSON 修复器。
+
+你的唯一任务是把无效输出修复成合法 JSON 数组。
+
+要求：
+1. 只输出 JSON，不要加解释。
+2. 每个数组项都必须保留原始页序和标题意图。
+3. 不要新增无关页面，也不要把页面合并成更少的页。
+4. 每页最多 4 条 bullet points。
+5. `illustration`、`cover`、`quote` 或 `path_hint=path_b` 的页面，必须有 `image_prompt`。
+"""
+
+
+WRITER_REPAIR_USER_TEMPLATE = """请修复下面这个 Writer 输出。
+
+<演示主题>
+{user_intent}
+</演示主题>
+
+<大纲结构>
+{outline_text}
+</大纲结构>
+
+<原始输出>
+{raw_output}
+</原始输出>
+
+<失败原因>
+{failure_reason}
+</失败原因>
+
+请输出合法 JSON 数组，结构必须符合 writer 输出格式。"""

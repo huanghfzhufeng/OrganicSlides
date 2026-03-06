@@ -43,7 +43,8 @@ Examples:
   Validation completed on `2026-03-07` with project access tokens across API, SSE, and downloads, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [x] `REQ-008` Enforce render path preference through the entire generation pipeline.
   Validation completed on `2026-03-07` with end-to-end render path enforcement in style state, Visual, RenderPrep, and Renderer, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-009` Replace silent generic fallbacks with explicit repair, retry, or failure states.
+- [x] `REQ-009` Replace silent generic fallbacks with explicit repair, retry, or failure states.
+  Validation completed on `2026-03-07` with explicit repair/failure handling in Planner, Writer, Visual, workflow error routing, SSE failure events, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 
 ## 4. Phase 2: Generation Quality Core
 

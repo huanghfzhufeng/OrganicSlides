@@ -44,6 +44,16 @@ from styles.recommender import StyleRecommender
 logger = logging.getLogger(__name__)
 
 
+def _workflow_failed(state: Optional[dict]) -> bool:
+    if not state:
+        return False
+
+    status = state.get("current_status", "")
+    if state.get("error"):
+        return True
+    return status == "error" or status.endswith("_error") or status.endswith("_failed")
+
+
 async def _load_session_state(session_id: str) -> Optional[dict]:
     """Load workflow state from durable PostgreSQL storage only."""
     return await load_workflow_state(session_id)
@@ -252,7 +262,19 @@ async def generate_sse_events(session_id: str, state: PresentationState):
         # 获取最终状态
         final_state = await _load_session_state(session_id) or {}
         
-        if final_state.get("current_status") == "waiting_for_outline_approval":
+        if _workflow_failed(final_state):
+            error_message = final_state.get("error", "Workflow failed")
+            error_data = {"type": "error", "status": "error", "message": error_message}
+            await update_generation_job(
+                job_id,
+                state=final_state,
+                status="error",
+                error_message=error_message,
+            )
+            await record_job_event(session_id, error_data["type"], error_data, job_id=job_id)
+            await create_project_revision(session_id, "generation_failed", final_state)
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+        elif final_state.get("current_status") == "waiting_for_outline_approval":
             hitl_data = {
                 "type": "hitl",
                 "status": "waiting_for_approval",
@@ -337,15 +359,28 @@ async def generate_resume_sse_events(session_id: str):
 
         final_state = await _load_session_state(session_id) or {}
         pptx_path = final_state.get("pptx_path", "")
-        complete_data = {
-            "type": "complete",
-            "status": "done",
-            "pptx_path": pptx_path,
-        }
-        await update_generation_job(job_id, state=final_state, status="completed")
-        await record_job_event(session_id, complete_data["type"], complete_data, job_id=job_id)
-        await create_project_revision(session_id, "generation_completed", final_state)
-        yield f"data: {json.dumps(complete_data, ensure_ascii=False)}\n\n"
+        if _workflow_failed(final_state):
+            error_message = final_state.get("error", "Workflow failed")
+            error_data = {"type": "error", "status": "error", "message": error_message}
+            await update_generation_job(
+                job_id,
+                state=final_state,
+                status="error",
+                error_message=error_message,
+            )
+            await record_job_event(session_id, error_data["type"], error_data, job_id=job_id)
+            await create_project_revision(session_id, "generation_failed", final_state)
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+        else:
+            complete_data = {
+                "type": "complete",
+                "status": "done",
+                "pptx_path": pptx_path,
+            }
+            await update_generation_job(job_id, state=final_state, status="completed")
+            await record_job_event(session_id, complete_data["type"], complete_data, job_id=job_id)
+            await create_project_revision(session_id, "generation_completed", final_state)
+            yield f"data: {json.dumps(complete_data, ensure_ascii=False)}\n\n"
 
     except Exception as e:
         current_state = await _load_session_state(session_id) or dict(state)

@@ -115,6 +115,11 @@ class PresentationState(TypedDict, total=False):
     # 消息历史 (用于 LLM 上下文)
     messages: List[dict]
 
+    # Structured output diagnostics
+    planner_diagnostics: dict
+    writer_diagnostics: dict
+    visual_diagnostics: dict
+
 
 def create_initial_state(
     session_id: str,
@@ -170,7 +175,10 @@ def create_initial_state(
         current_status="initialized",
         current_agent="",
         error=None,
-        messages=[]
+        messages=[],
+        planner_diagnostics={},
+        writer_diagnostics={},
+        visual_diagnostics={},
     )
 
 

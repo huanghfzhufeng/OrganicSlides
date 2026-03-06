@@ -10,9 +10,15 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from agents.planner.prompts import PLANNER_SYSTEM_PROMPT, PLANNER_USER_TEMPLATE
+from agents.planner.prompts import (
+    PLANNER_REPAIR_SYSTEM_PROMPT,
+    PLANNER_REPAIR_USER_TEMPLATE,
+    PLANNER_SYSTEM_PROMPT,
+    PLANNER_USER_TEMPLATE,
+)
 from agents.planner.tools import build_context, build_style_context, validate_outline, normalize_outline
 from agents.base import get_llm, create_system_message
+from agents.structured_output import extract_json_payload, resolve_structured_output
 
 
 async def run(state: dict) -> dict[str, Any]:
@@ -46,25 +52,51 @@ async def run(state: dict) -> dict[str, Any]:
 
     response = await llm.ainvoke(messages)
 
-    # 解析 LLM 响应
-    outline = _parse_outline_response(response.content)
+    result = await resolve_structured_output(
+        llm=llm,
+        raw_content=response.content,
+        parser=_parse_outline_response,
+        validator=_validate_outline_response,
+        repair_system_prompt=PLANNER_REPAIR_SYSTEM_PROMPT,
+        repair_user_template=PLANNER_REPAIR_USER_TEMPLATE,
+        repair_context={
+            "user_intent": user_intent,
+        },
+    )
 
-    # 规范化（补全缺失字段，强制 max 4 key_points）
-    outline = normalize_outline(outline)
+    if not result.success:
+        return {
+            "outline": [],
+            "current_status": "planner_error",
+            "current_agent": "planner",
+            "error": f"策划输出无法修复: {result.error}",
+            "planner_diagnostics": {
+                "repair_attempted": len(result.attempts) > 1,
+                "attempts": result.attempts,
+            },
+            "messages": state.get("messages", []) + [
+                {
+                    "role": "assistant",
+                    "content": f"策划师输出修复失败：{result.error}",
+                    "agent": "planner",
+                }
+            ],
+        }
 
-    # 验证大纲
-    is_valid, msg = validate_outline(outline)
-    if not is_valid:
-        outline = _create_default_outline()
+    outline = result.value
 
     return {
         "outline": outline,
         "current_status": "outline_generated",
         "current_agent": "planner",
+        "planner_diagnostics": {
+            "repair_attempted": len(result.attempts) > 1,
+            "attempts": result.attempts,
+        },
         "messages": state.get("messages", []) + [
             {
                 "role": "assistant",
-                "content": f"策划师已生成 {len(outline)} 页大纲",
+                "content": _build_success_message(outline, result.repaired),
                 "agent": "planner"
             }
         ]
@@ -73,27 +105,32 @@ async def run(state: dict) -> dict[str, Any]:
 
 def _parse_outline_response(content: str) -> list:
     """解析 LLM 响应中的大纲"""
-    try:
-        # 处理 markdown 代码块
-        if "```json" in content:
-            json_str = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            json_str = content.split("```")[1].split("```")[0].strip()
-        else:
-            json_str = content.strip()
+    json_str = extract_json_payload(content)
+    result = json.loads(json_str)
+    if not isinstance(result, dict):
+        raise ValueError("planner output must be a JSON object")
 
-        result = json.loads(json_str)
-        outline = result.get("outline", [])
+    outline = result.get("outline")
+    if not isinstance(outline, list):
+        raise ValueError("planner output must include an outline array")
 
-        # 为每个章节添加 ID（如果没有）
-        for i, section in enumerate(outline):
-            if "id" not in section:
-                section["id"] = f"section_{uuid.uuid4().hex[:8]}"
+    # 为每个章节添加 ID（如果没有）
+    for section in outline:
+        if "id" not in section:
+            section["id"] = f"section_{uuid.uuid4().hex[:8]}"
 
-        return outline
+    return normalize_outline(outline)
 
-    except (json.JSONDecodeError, IndexError, KeyError):
-        return _create_default_outline()
+
+def _validate_outline_response(outline: list) -> tuple[bool, str]:
+    if not outline:
+        return False, "outline cannot be empty"
+    return validate_outline(outline)
+
+
+def _build_success_message(outline: list, repaired: bool) -> str:
+    action = "修复并生成" if repaired else "已生成"
+    return f"策划师{action} {len(outline)} 页大纲"
 
 
 def _create_default_outline() -> list:
