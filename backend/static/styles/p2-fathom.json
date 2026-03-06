@@ -1,0 +1,38 @@
+{
+  "id": "p2-fathom",
+  "name_zh": "Fathom Data Narrative数据叙事风",
+  "name_en": "Fathom Data Narrative",
+  "tier": "editorial",
+  "description": "科学期刊派。每像素都承载信息。高信息密度+设计优雅。",
+  "colors": {
+    "primary": "#FFFFFF",
+    "secondary": "#333333",
+    "background": "#FFFFFF",
+    "text": "#333333",
+    "accent": "#1A365D"
+  },
+  "typography": {
+    "title_size": "60pt+",
+    "body_size": "13pt",
+    "family": "GT America / Graphik (geometric sans-serif)"
+  },
+  "use_cases": [
+    "数据报告",
+    "科学展示",
+    "研究汇报",
+    "信息可视化",
+    "学术演讲"
+  ],
+  "sample_image_path": "/static/styles/samples/style-p2-fathom.png",
+  "render_paths": ["path_a"],
+  "base_style_prompt": "Data-first design. Charts and data 50%, text 30%, whitespace 20%. Large numbers (60pt+) as visual anchors. Annotation systems embedded in layout. Small multiples chart arrays. Precise footnotes and source citations. Scientific rigor meets design elegance.",
+  "key_principles": [
+    "数据优先",
+    "高信息密度",
+    "设计优雅",
+    "科学严谨",
+    "注释系统"
+  ],
+  "path_note": "Path A exclusive (HTML→PPTX). Complex data visualization requires precise layout control.",
+  "philosophy": "每一个像素都必须承载信息。科学严谨+设计优雅。"
+}

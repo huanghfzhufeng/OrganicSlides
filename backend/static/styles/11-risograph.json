@@ -1,0 +1,35 @@
+{
+  "id": "11-risograph",
+  "name_zh": "孔版印刷Risograph",
+  "name_en": "Risograph",
+  "tier": 3,
+  "description": "双色叠印独特美学。套色错位2-3px，半色调网点，粗糙纸感。",
+  "colors": {
+    "primary": "#FAF3E0",
+    "secondary": "#FF6B9D",
+    "background": "#FAF3E0",
+    "text": "#0077B6",
+    "accent": "#6B3FA0"
+  },
+  "typography": {
+    "title_size": "32pt+",
+    "body_size": "16pt+",
+    "family": "Modern sans-serif"
+  },
+  "use_cases": [
+    "独立品牌",
+    "创意行业",
+    "音乐相关",
+    "艺术项目",
+    "独特品牌调性"
+  ],
+  "sample_image_path": "/static/styles/samples/style-11-risograph.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Risograph print style. Paper color (#FAF3E0), fluorescent pink (#FF6B9D), blue (#0077B6) creating overlay purple (#6B3FA0). Strict two-color overlay with 2-3px registration offset. Halftone dot patterns. Rough paper texture. Retro print aesthetic with contemporary design sensibility.",
+  "key_principles": [
+    "双色严格叠印",
+    "套色错位2-3px",
+    "半色调网点",
+    "粗糙纸感"
+  ]
+}

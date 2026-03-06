@@ -1,0 +1,35 @@
+{
+  "id": "14-blueprint",
+  "name_zh": "工程蓝图Blueprint",
+  "name_en": "Blueprint Technical",
+  "tier": 3,
+  "description": "精密机器隐喻。白线on深蓝底，工程方格纸网格，尺寸标注。",
+  "colors": {
+    "primary": "#1B3A5C",
+    "secondary": "#FFFFFF",
+    "background": "#1B3A5C",
+    "text": "#FFFFFF",
+    "accent": "#FF2442"
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "18pt+",
+    "family": "Monospace (technical)"
+  },
+  "use_cases": [
+    "技术架构",
+    "工程方案",
+    "系统设计",
+    "流程图",
+    "技术演讲"
+  ],
+  "sample_image_path": "/static/styles/samples/style-14-blueprint.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Blueprint technical style. Blueprint blue (#1B3A5C) 75%, white lines (#FFFFFF) 20%, red annotations (#FF2442) 5%. White line drawings on deep blue background. Engineering grid paper background. Dimension annotation lines. Technical title block. Precision and mechanical aesthetics.",
+  "key_principles": [
+    "白线on蓝底",
+    "工程网格",
+    "尺寸标注",
+    "精密美学"
+  ]
+}

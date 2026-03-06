@@ -1,0 +1,38 @@
+{
+  "id": "p3-muller-brockmann",
+  "name_zh": "Müller-Brockmann Grid瑞士网格风",
+  "name_en": "Müller-Brockmann Grid",
+  "tier": "editorial",
+  "description": "纯粹主义派。客观性即美。数学精确网格，功能主义至上。",
+  "colors": {
+    "primary": "#FFFFFF",
+    "secondary": "#000000",
+    "background": "#FFFFFF",
+    "text": "#000000",
+    "accent": "#1A1A1A"
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "10pt",
+    "family": "Akzidenz-Grotesk / Helvetica"
+  },
+  "use_cases": [
+    "培训课件",
+    "技术架构",
+    "流程说明",
+    "教育材料",
+    "系统文档"
+  ],
+  "sample_image_path": "/static/styles/samples/style-p3-muller-brockmann.png",
+  "render_paths": ["path_a"],
+  "base_style_prompt": "8-column mathematical grid. All elements align to grid lines. Structured grid 70%, text 20%, accent 10%. Helvetica strict left alignment. Font weight contrast (300 vs 700). NO decorative elements. Pure geometric shapes only. Black lines for tables. Absolute objectivity.",
+  "key_principles": [
+    "8列数学网格",
+    "绝对对齐",
+    "功能主义",
+    "零装饰",
+    "客观性"
+  ],
+  "path_note": "Path A exclusive (HTML→PPTX). Strict grid system requires exact layout control.",
+  "philosophy": "客观性即美。数学精确的网格系统让任何混乱的信息变得有序。"
+}

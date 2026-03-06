@@ -1,0 +1,36 @@
+{
+  "id": "07-dunhuang",
+  "name_zh": "敦煌壁画",
+  "name_en": "Dunhuang Mural",
+  "tier": 2,
+  "description": "东方美学，庄重诗意。飞天飘带、卷轴叙事、矿物质颜料感。",
+  "colors": {
+    "primary": "#D4A574",
+    "secondary": "#2E86AB",
+    "background": "#D4A574",
+    "text": "#1A1A1A",
+    "accent": "#C53D43",
+    "additional": ["#5DAE8B", "#C4A35A"]
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "18pt+",
+    "family": "Serif (classical)"
+  },
+  "use_cases": [
+    "国风品牌",
+    "文化项目",
+    "高端场合",
+    "东方美学",
+    "历史叙事"
+  ],
+  "sample_image_path": "/static/styles/samples/style-07-dunhuang.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Dunhuang mural style. Ochre base (#D4A574), stone blue (#2E86AB), vermillion (#C53D43), stone green (#5DAE8B), gold (#C4A35A). Scroll narrative from left to right across 4 stages. Flying apsaras with elegant ribbons unite the composition. Graceful figures inspired by Dunhuang art (NOT direct Buddhist imagery). Auspicious clouds, lotus flowers, gold frame borders. Mineral pigment quality — slightly matte, not digital bright.",
+  "key_principles": [
+    "卷轴叙事从左到右",
+    "飞天飘带贯穿",
+    "矿物质颜料感",
+    "优雅东方美学"
+  ]
+}

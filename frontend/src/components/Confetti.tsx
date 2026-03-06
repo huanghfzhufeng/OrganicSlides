@@ -27,8 +27,8 @@ const Confetti: React.FC<ConfettiProps> = ({
 }) => {
     const [pieces, setPieces] = useState<ConfettiPiece[]>([]);
     const [isVisible, setIsVisible] = useState(false);
-    const animationRef = useRef<number>();
-    const startTimeRef = useRef<number>();
+    const animationRef = useRef<number | null>(null);
+    const startTimeRef = useRef<number | null>(null);
 
     useEffect(() => {
         if (isActive) {
@@ -71,7 +71,7 @@ const Confetti: React.FC<ConfettiProps> = ({
         }
 
         return () => {
-            if (animationRef.current) {
+            if (animationRef.current !== null) {
                 cancelAnimationFrame(animationRef.current);
             }
         };

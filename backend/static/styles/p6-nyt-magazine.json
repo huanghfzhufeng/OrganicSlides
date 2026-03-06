@@ -1,0 +1,45 @@
+{
+  "id": "p6-nyt-magazine",
+  "name_zh": "NYT Magazine Editorial纽约时报编辑风",
+  "name_en": "NYT Magazine Editorial",
+  "tier": "editorial",
+  "description": "新闻排版派。Georgia衬线标题+编辑室顶部红线+权威感。★主要推荐",
+  "colors": {
+    "primary": "#FEFEF9",
+    "secondary": "#1A1A1A",
+    "background": "#FEFEF9",
+    "text": "#1A1A1A",
+    "accent": "#C8000A"
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "13pt",
+    "family": "Georgia serif (titles) + system sans-serif (body)"
+  },
+  "use_cases": [
+    "正式商务汇报",
+    "数据报告",
+    "行业分析",
+    "投资路演",
+    "权威演讲"
+  ],
+  "sample_image_path": "/static/styles/samples/style-p6-nyt-magazine.png",
+  "render_paths": ["path_a"],
+  "base_style_prompt": "Editorial journalism aesthetic. HTML top border: 5px solid #C8000A (signature red rule). Paper white (#FEFEF9) background, near-black (#1A1A1A) text, editorial red (#C8000A) accent. Georgia serif for all titles (36pt+). System sans-serif for body (13pt). Section labels in small-caps (letter-spacing 0.15em). Horizontal rule system throughout. Step numbers in large faded Georgia (opacity 5.5%). Code blocks with color-coded left border.",
+  "key_principles": [
+    "顶部5px红线签名",
+    "Georgia衬线权威感",
+    "小型大写字母标签",
+    "水平规则系统",
+    "编辑蓝/编辑绿路径标记"
+  ],
+  "path_note": "Path A exclusive (HTML→PPTX). ★ 主要推荐用于正式商务。字体精度和间距系统是命脉，AI无法保证排版精确性。",
+  "philosophy": "用Georgia衬线字体的权威感 + 精确的horizontal rule系统 + 极克制的单一编辑红，让内容在白纸上自己发声。有温度但有权威感，从不花哨。",
+  "css_reference": {
+    "html_border": "border-top: 5px solid #C8000A",
+    "section_label": "font-variant: small-caps; letter-spacing: 0.15em; color: #C8000A; font-size: 11px; font-weight: 700",
+    "step_bg_number": "font-family: Georgia, serif; font-size: 140px; color: #C8000A; opacity: 0.055; position: absolute",
+    "code_block_path_a": "border-left: 3px solid #1A4A8A",
+    "code_block_path_b": "border-left: 3px solid #1A6B45"
+  }
+}

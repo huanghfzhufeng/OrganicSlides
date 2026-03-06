@@ -7,14 +7,14 @@ import asyncio
 import uuid
 import json
 from pathlib import Path
-from typing import Optional
+from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel
-from typing import List, Dict, Any
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -24,6 +24,8 @@ from database.postgres import get_db, init_db, close_db
 from database.redis_client import redis_client
 from database.models import User, Project
 from auth import auth_router, get_current_user, get_current_active_user
+from styles.registry import get_registry
+from styles.recommender import StyleRecommender
 
 
 @asynccontextmanager
@@ -63,6 +65,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 静态文件服务 (style sample images)
+_static_dir = Path(__file__).parent / "static"
+if _static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+# Output files service (thumbnails, generated PPTX previews)
+_output_dir = Path(__file__).parent / "output"
+_output_dir.mkdir(exist_ok=True)
+app.mount("/output", StaticFiles(directory=str(_output_dir)), name="output")
+
 # 注册认证路由
 app.include_router(auth_router)
 
@@ -71,7 +83,23 @@ app.include_router(auth_router)
 
 class ProjectCreate(BaseModel):
     prompt: str
-    style: str = "organic"
+    style_id: Optional[str] = None                # new style system (preferred)
+    style: str = "organic"                         # legacy fallback
+    render_path_preference: str = "auto"           # "auto" | "path_a" | "path_b"
+
+    @field_validator("prompt")
+    @classmethod
+    def prompt_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("prompt must not be empty")
+        return v.strip()
+
+    @field_validator("render_path_preference")
+    @classmethod
+    def valid_render_path(cls, v: str) -> str:
+        if v not in ("auto", "path_a", "path_b"):
+            return "auto"
+        return v
 
 
 class OutlineUpdate(BaseModel):
@@ -81,6 +109,12 @@ class OutlineUpdate(BaseModel):
 
 class WorkflowResume(BaseModel):
     session_id: str
+
+
+class StyleUpdate(BaseModel):
+    session_id: str
+    style_id: str
+    render_path_preference: str = "auto"  # "auto" | "path_a" | "path_b"
 
 
 # ==================== SSE 流式响应 ====================
@@ -131,25 +165,26 @@ async def generate_resume_sse_events(session_id: str):
     """生成恢复阶段的 SSE 事件流"""
     resume_app = get_resume_app()
     state = await redis_client.get_session(session_id)
-    
+
     if not state:
         yield f"data: {json.dumps({'type': 'error', 'message': 'Session not found'}, ensure_ascii=False)}\n\n"
         return
-    
+
     state["outline_approved"] = True
-    
+
     config = {"configurable": {"thread_id": f"{session_id}_resume"}}
-    
+
     try:
         async for event in resume_app.astream(dict(state), config):
             for node_name, node_output in event.items():
                 if node_name == "__end__":
                     continue
-                
+
                 status = node_output.get("current_status", "processing")
                 agent = node_output.get("current_agent", node_name)
                 messages = node_output.get("messages", [])
-                
+
+                # Emit the standard status event
                 data = {
                     "type": "status",
                     "agent": agent,
@@ -157,16 +192,23 @@ async def generate_resume_sse_events(session_id: str):
                     "message": messages[-1]["content"] if messages else ""
                 }
                 yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                
+
+                # Emit individual render_progress events if the renderer produced them
+                render_progress_events: list[dict] = node_output.get(
+                    "render_progress_events", []
+                )
+                for rpe in render_progress_events:
+                    yield f"data: {json.dumps(rpe, ensure_ascii=False)}\n\n"
+
                 await redis_client.update_session(session_id, node_output)
                 await redis_client.push_log(session_id, data)
                 await asyncio.sleep(0.1)
-        
+
         final_state = await redis_client.get_session(session_id) or {}
         pptx_path = final_state.get("pptx_path", "")
-        
+
         yield f"data: {json.dumps({'type': 'complete', 'status': 'done', 'pptx_path': pptx_path}, ensure_ascii=False)}\n\n"
-        
+
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
@@ -179,6 +221,78 @@ async def root():
     return {"message": "MAS-PPT API is running", "version": "1.0.0"}
 
 
+# ==================== 风格 API ====================
+
+@app.get("/api/v1/styles")
+async def list_styles():
+    """
+    返回所有可用风格列表（含预览图 URL）。
+    """
+    registry = get_registry()
+    styles = registry.list_styles()
+
+    # Build lightweight summary list
+    result = [
+        {
+            "id": s["id"],
+            "name_zh": s["name_zh"],
+            "name_en": s["name_en"],
+            "tier": s["tier"],
+            "use_cases": s.get("use_cases", []),
+            "render_paths": s.get("render_paths", []),
+            "sample_image_url": s.get("sample_image_path", ""),
+        }
+        for s in styles
+    ]
+    return {"styles": result, "total": len(result)}
+
+
+@app.get("/api/v1/styles/recommend")
+async def recommend_styles(intent: str = Query(..., min_length=1, description="用户意图描述")):
+    """
+    根据用户意图返回 Top 3 推荐风格 ID 列表。
+    """
+    recommender = StyleRecommender()
+    recommended = recommender.recommend(intent, max_results=3)
+
+    result = [
+        {
+            "id": s["id"],
+            "name_zh": s["name_zh"],
+            "name_en": s["name_en"],
+            "tier": s["tier"],
+            "sample_image_url": s.get("sample_image_path", ""),
+        }
+        for s in recommended
+    ]
+    return {"recommended": result, "intent": intent}
+
+
+@app.get("/api/v1/styles/{style_id}/sample")
+async def get_style_sample(style_id: str):
+    """
+    返回指定风格的预览样例图（静态文件）。
+    """
+    registry = get_registry()
+    style = registry.get_style(style_id)
+    if style is None:
+        raise HTTPException(status_code=404, detail=f"Style '{style_id}' not found")
+
+    sample_path_str = style.get("sample_image_path", "")
+    if not sample_path_str:
+        raise HTTPException(status_code=404, detail="No sample image available for this style")
+
+    # sample_image_path is a URL path like "/static/styles/samples/style-01-snoopy.png"
+    # Resolve to filesystem path relative to backend/
+    relative = sample_path_str.lstrip("/")  # "static/styles/samples/..."
+    file_path = Path(__file__).parent / relative
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Sample image file not found on disk")
+
+    return FileResponse(str(file_path), media_type="image/png")
+
+
 @app.post("/api/v1/project/create")
 async def create_project(
     project: ProjectCreate,
@@ -186,32 +300,56 @@ async def create_project(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    创建项目并启动工作流
+    创建项目并启动工作流。
+
+    接受 style_id（新样式系统）或 style（旧主题名，向后兼容）。
     """
     session_id = str(uuid.uuid4())
-    
+
+    # Resolve style from registry when style_id is supplied
+    style_config: Optional[dict] = None
+    resolved_style_id: Optional[str] = None
+    if project.style_id:
+        registry = get_registry()
+        style_config = registry.get_style(project.style_id)
+        if style_config is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown style_id: '{project.style_id}'"
+            )
+        resolved_style_id = project.style_id
+
+    # Embed render_path_preference into style_config so renderer honours it
+    if style_config is not None and project.render_path_preference != "auto":
+        style_config = {
+            **style_config,
+            "render_path_preference": project.render_path_preference,
+        }
+
     # 创建初始状态
     state = create_initial_state(
         session_id=session_id,
         user_intent=project.prompt,
-        theme=project.style
+        theme=project.style,
+        style_id=resolved_style_id,
+        style_config=style_config,
     )
-    
+
     # 保存到 Redis
     await redis_client.set_session(session_id, state)
-    
+
     # 如果用户已登录，保存到数据库
     if current_user:
         db_project = Project(
             id=uuid.UUID(session_id),
             user_id=current_user.id,
             user_intent=project.prompt,
-            theme=project.style,
+            theme=project.style_id or project.style,
             status="created"
         )
         db.add(db_project)
         await db.commit()
-    
+
     return {"session_id": session_id, "status": "created"}
 
 
@@ -276,6 +414,54 @@ async def update_outline(
     await db.commit()
     
     return {"status": "outline_updated", "outline": data.outline}
+
+
+@app.post("/api/v1/project/style")
+async def update_project_style(data: StyleUpdate):
+    """
+    更新项目的视觉风格（在大纲确认后、恢复工作流前调用）。
+
+    The frontend selects style at step 3, after the project is already
+    created (step 0) and outline approved (step 2). This endpoint lets
+    the frontend attach the chosen style before resuming generation.
+    """
+    state = await redis_client.get_session(data.session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    registry = get_registry()
+    style_config = registry.get_style(data.style_id)
+    if style_config is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown style_id: '{data.style_id}'"
+        )
+
+    render_pref = data.render_path_preference
+    if render_pref not in ("auto", "path_a", "path_b"):
+        render_pref = "auto"
+
+    await redis_client.update_session(data.session_id, {
+        "theme_config": {
+            "style_id": data.style_id,
+            "style": style_config.get("id", data.style_id),
+            "name_zh": style_config.get("name_zh", ""),
+            "name_en": style_config.get("name_en", ""),
+            "tier": style_config.get("tier", 1),
+            "colors": style_config.get("colors", {}),
+            "typography": style_config.get("typography", {}),
+            "render_paths": style_config.get("render_paths", ["path_a"]),
+            "base_style_prompt": style_config.get("base_style_prompt", ""),
+            "sample_image_path": style_config.get("sample_image_path", ""),
+            "render_path_preference": render_pref,
+        }
+    })
+
+    return {
+        "status": "style_updated",
+        "style_id": data.style_id,
+        "style_name": style_config.get("name_zh", ""),
+    }
 
 
 @app.get("/api/v1/workflow/resume/{session_id}")

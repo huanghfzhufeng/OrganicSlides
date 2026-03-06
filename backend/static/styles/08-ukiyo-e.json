@@ -1,0 +1,36 @@
+{
+  "id": "08-ukiyo-e",
+  "name_zh": "浮世绘",
+  "name_en": "Ukiyo-e (Japanese Woodblock)",
+  "tier": 2,
+  "description": "浪潮隐喻天然表达递进。木版画质感，平涂无渐变。",
+  "colors": {
+    "primary": "#F5F0E1",
+    "secondary": "#1B4B7A",
+    "background": "#F5F0E1",
+    "text": "#1B4B7A",
+    "accent": "#C53D43",
+    "additional": ["#C4A35A"]
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "18pt+",
+    "family": "Traditional serif"
+  },
+  "use_cases": [
+    "日本/东方市场",
+    "跨境品牌",
+    "文化交流",
+    "艺术展览",
+    "进程表达"
+  ],
+  "sample_image_path": "/static/styles/samples/style-08-ukiyo-e.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Ukiyo-e (Japanese woodblock print) style. Washi paper cream (#F5F0E1), indigo blue (#1B4B7A), vermillion (#C53D43), gold (#C4A35A). Wave metaphor: ripples → surge → great wave → breaking wave (maps to 4 steps). Ukiyo-e cartouche labels. Japanese cloud patterns (karakusa) as decoration. Woodblock print quality — flat colors with no gradients. Traditional Japanese aesthetic with narrative progression.",
+  "key_principles": [
+    "浪潮隐喻递进",
+    "木版画质感",
+    "平涂无渐变",
+    "日式装饰"
+  ]
+}

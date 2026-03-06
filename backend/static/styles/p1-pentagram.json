@@ -1,0 +1,38 @@
+{
+  "id": "p1-pentagram",
+  "name_zh": "Pentagram Editorial编辑杂志风",
+  "name_en": "Pentagram Editorial",
+  "tier": "editorial",
+  "description": "信息建筑派。字体即语言，网格即思想。瑞士网格系统，极致克制。",
+  "colors": {
+    "primary": "#FFFDF7",
+    "secondary": "#1A1A1A",
+    "background": "#FFFDF7",
+    "text": "#1A1A1A",
+    "accent": "#D4480B"
+  },
+  "typography": {
+    "title_size": "28pt+",
+    "body_size": "10-13pt",
+    "family": "System sans-serif + optional accent"
+  },
+  "use_cases": [
+    "行业分析",
+    "咨询报告",
+    "数据驱动内容",
+    "编辑杂志",
+    "高端商务"
+  ],
+  "sample_image_path": "/static/styles/samples/style-p1-pentagram.png",
+  "render_paths": ["path_a"],
+  "base_style_prompt": "Swiss grid system. Information architecture focused. One accent color only. Whitespace 60%, content 30%, accent 10%. Black section labels as design elements (INSIGHT, PART 03). 2px black border cards. Horizontal divider lines. Data visualization embedded seamlessly.",
+  "key_principles": [
+    "瑞士网格系统",
+    "字体即语言",
+    "极致留白",
+    "单一强调色",
+    "编辑权威感"
+  ],
+  "path_note": "Path A exclusive (HTML→PPTX). Requires precise typography and grid system.",
+  "philosophy": "字体即语言，网格即思想。用极度克制的设计让数据和内容自己说话。"
+}

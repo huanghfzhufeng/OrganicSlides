@@ -1,0 +1,35 @@
+{
+  "id": "12-isometric",
+  "name_zh": "等轴测Isometric",
+  "name_en": "Isometric Design",
+  "tier": 3,
+  "description": "2.5D游戏世界感。Monument Valley美学，小人物走楼梯。",
+  "colors": {
+    "primary": "#DDE1E7",
+    "secondary": "#87CEEB",
+    "background": "#DDE1E7",
+    "text": "#333333",
+    "accent": "#FFD700"
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "18pt+",
+    "family": "Clean sans-serif"
+  },
+  "use_cases": [
+    "科技产品",
+    "SaaS流程",
+    "游戏化讲解",
+    "应用介绍",
+    "3D可视化"
+  ],
+  "sample_image_path": "/static/styles/samples/style-12-isometric.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Isometric 2.5D design. Light gray-blue (#DDE1E7) background with pastel accent colors (lavender, mint green, coral, soft yellow). Four ascending platforms with small characters climbing stairs. Monument Valley-inspired aesthetic. Geometric clarity, digital native design.",
+  "key_principles": [
+    "2.5D视角",
+    "四个递升平台",
+    "小人物爬楼梯",
+    "Monument Valley美学"
+  ]
+}

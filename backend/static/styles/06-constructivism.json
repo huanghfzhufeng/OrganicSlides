@@ -1,0 +1,35 @@
+{
+  "id": "06-constructivism",
+  "name_zh": "苏联构成主义",
+  "name_en": "Soviet Constructivism",
+  "tier": 2,
+  "description": "力量感强，辨识度极高。对角线楔形、旋转文字、几何crescendo。",
+  "colors": {
+    "primary": "#CC0000",
+    "secondary": "#1A1A1A",
+    "background": "#F5E6D3",
+    "text": "#1A1A1A",
+    "accent": "#F5E6D3"
+  },
+  "typography": {
+    "title_size": "42pt+",
+    "body_size": "18pt+",
+    "family": "Bold geometric sans-serif"
+  },
+  "use_cases": [
+    "产品发布/Keynote",
+    "品牌宣言",
+    "动员会",
+    "展览策划",
+    "高能量事件"
+  ],
+  "sample_image_path": "/static/styles/samples/style-06-constructivism.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Soviet Constructivism style. Revolutionary red (#CC0000) 40%, black (#1A1A1A) 25%, cream (#F5E6D3) 30%. Diagonal wedge composition from lower-left to upper-right. All text rotated 15-30 degrees — no horizontal lines. Geometric shapes represent progression from small to large (visual crescendo). Pure color fills with sharp edges, NO gradients. Three-color limitation creates power.",
+  "key_principles": [
+    "对角线楔形构图",
+    "文字旋转15-30度",
+    "几何crescendo",
+    "纯色填充无渐变"
+  ]
+}

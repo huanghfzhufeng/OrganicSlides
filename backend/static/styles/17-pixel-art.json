@@ -1,0 +1,35 @@
+{
+  "id": "17-pixel-art",
+  "name_zh": "像素画Pixel Art",
+  "name_en": "Pixel Art (RPG Style)",
+  "tier": 3,
+  "description": "RPG任务隐喻。16-bit调色板，横版世界地图，像素角色。",
+  "colors": {
+    "primary": "#87CEEB",
+    "secondary": "#4CAF50",
+    "background": "#87CEEB",
+    "text": "#1A237E",
+    "accent": "#FFD700"
+  },
+  "typography": {
+    "title_size": "24pt+",
+    "body_size": "16pt+",
+    "family": "Monospace (pixel-style)"
+  },
+  "use_cases": [
+    "游戏相关",
+    "年轻群体",
+    "Gamification",
+    "任务流程",
+    "复古美学"
+  ],
+  "sample_image_path": "/static/styles/samples/style-17-pixel-art.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Pixel art RPG style. 16-bit color palette: sky blue (#87CEEB), grass green (#4CAF50), UI deep blue (#1A237E), gold (#FFD700). Side-scrolling RPG world map. Pixel-art characters across four regions. RPG progress bar. Text boxes with dialogue. QUEST narrative metaphor. Retro gaming aesthetic.",
+  "key_principles": [
+    "16-bit调色板",
+    "横版RPG地图",
+    "像素角色",
+    "任务隐喻"
+  ]
+}

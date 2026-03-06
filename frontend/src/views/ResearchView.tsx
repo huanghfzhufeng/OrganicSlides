@@ -4,6 +4,7 @@ import { Globe, FileText, Loader2, Search, BookOpen, Database, CheckCircle2 } fr
 import { api, type OutlineItem } from '../api/client';
 import { flowingLeavesIcon } from '../assets/icons';
 import { ResearchSkeleton } from '../components/Skeleton';
+import ErrorMessage from '../components/ErrorMessage';
 
 interface ResearchViewProps {
     sessionId: string;
@@ -16,6 +17,17 @@ interface ResearchStats {
     sectionsCreated: number;
 }
 
+// Parse real counts from researcher agent message text.
+// Message format: "研究员已完成搜索: 找到 N 条网络资源, M 条文档片段"
+function parseResearcherStats(message: string): Partial<ResearchStats> {
+    const webMatch = message.match(/找到\s*(\d+)\s*条网络资源/);
+    const docMatch = message.match(/(\d+)\s*条文档片段/);
+    const result: Partial<ResearchStats> = {};
+    if (webMatch) result.sourcesFound = parseInt(webMatch[1], 10);
+    if (docMatch) result.dataProcessed = parseInt(docMatch[1], 10);
+    return result;
+}
+
 const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, onComplete }) => {
     const [logs, setLogs] = useState<any[]>([]);
     const [currentStatus, setCurrentStatus] = useState("正在初始化研究...");
@@ -25,27 +37,25 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, onComplete }) =>
         sectionsCreated: 0,
     });
     const [progress, setProgress] = useState(0);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         const eventSource = new EventSource(api.getStartWorkflowUrl(sessionId));
 
         eventSource.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            console.log("SSE Event:", data);
 
             if (data.type === 'status') {
                 setLogs(prev => [...prev, data]);
                 setCurrentStatus(data.message || `正在由 ${data.agent} 处理...`);
-
-                // 模拟进度更新
                 setProgress(prev => Math.min(prev + 15, 90));
 
-                // 根据代理类型更新统计
-                if (data.agent === 'researcher') {
+                if (data.agent === 'researcher' && data.message) {
+                    const parsed = parseResearcherStats(data.message);
                     setStats(prev => ({
                         ...prev,
-                        sourcesFound: prev.sourcesFound + Math.floor(Math.random() * 3) + 1,
-                        dataProcessed: prev.dataProcessed + Math.floor(Math.random() * 5) + 2,
+                        sourcesFound: parsed.sourcesFound ?? prev.sourcesFound,
+                        dataProcessed: parsed.dataProcessed ?? prev.dataProcessed,
                     }));
                 } else if (data.agent === 'planner') {
                     setStats(prev => ({
@@ -58,18 +68,30 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, onComplete }) =>
                 eventSource.close();
                 setTimeout(() => onComplete(data.outline), 500);
             } else if (data.type === 'error') {
-                console.error("Workflow Error:", data.message);
+                setError(data.message || '研究过程出错，请重试');
                 eventSource.close();
             }
         };
 
-        eventSource.onerror = (err) => {
-            console.error("SSE Error:", err);
+        eventSource.onerror = () => {
+            setError('连接中断，请检查网络后重试');
             eventSource.close();
         };
 
         return () => eventSource.close();
     }, [sessionId, onComplete]);
+
+    if (error) {
+        return (
+            <div className="max-w-3xl mx-auto page-enter">
+                <ErrorMessage
+                    message={error}
+                    type="network"
+                    onRetry={() => window.location.reload()}
+                />
+            </div>
+        );
+    }
 
     return (
         <div className="max-w-3xl mx-auto page-enter">
@@ -105,12 +127,12 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, onComplete }) =>
                 <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-4 border border-[#DED8CF] text-center">
                     <Search className="w-6 h-6 text-[#5D7052] mx-auto mb-2" />
                     <div className="text-2xl font-bold text-[#2C2C24]">{stats.sourcesFound}</div>
-                    <div className="text-xs text-[#78786C]">数据源</div>
+                    <div className="text-xs text-[#78786C]">网络资源</div>
                 </div>
                 <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-4 border border-[#DED8CF] text-center">
                     <Database className="w-6 h-6 text-[#C18C5D] mx-auto mb-2" />
                     <div className="text-2xl font-bold text-[#2C2C24]">{stats.dataProcessed}</div>
-                    <div className="text-xs text-[#78786C]">资料条目</div>
+                    <div className="text-xs text-[#78786C]">文档片段</div>
                 </div>
                 <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-4 border border-[#DED8CF] text-center">
                     <BookOpen className="w-6 h-6 text-[#A85448] mx-auto mb-2" />

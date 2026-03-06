@@ -1,0 +1,38 @@
+{
+  "id": "p4-build-luxury",
+  "name_zh": "Build Luxury Minimal奢侈极简风",
+  "name_en": "Build Luxury Minimal",
+  "tier": "editorial",
+  "description": "当代品牌派。精致的简单比复杂更难。75%留白，微妙字重变化，高端克制。",
+  "colors": {
+    "primary": "#FFFFFF",
+    "secondary": "#2D2D2D",
+    "background": "#FFFFFF",
+    "text": "#2D2D2D",
+    "accent": "#C0392B"
+  },
+  "typography": {
+    "title_size": "48pt+",
+    "body_size": "12pt",
+    "family": "Variable weight sans-serif"
+  },
+  "use_cases": [
+    "投资路演",
+    "品牌高管汇报",
+    "奢侈品介绍",
+    "高端服务",
+    "品牌叙事"
+  ],
+  "sample_image_path": "/static/styles/samples/style-p4-build-luxury.png",
+  "render_paths": ["path_a"],
+  "base_style_prompt": "Confident restraint. 75% whitespace, 15% text, 10% accent. Golden ratio composition. Minimal elements. One statement per page. Breathing space prioritized. Subtle font weight variations (200-600). Large but light title typography. Premium product imagery (if present). Simple line icons. Rounded corner cards.",
+  "key_principles": [
+    "75%留白",
+    "微妙字重变化",
+    "金比例构图",
+    "每页一件事",
+    "呼吸感优先"
+  ],
+  "path_note": "Path A exclusive (HTML→PPTX). Requires precise control of whitespace and typography.",
+  "philosophy": "精致的简单比复杂更难。用大量留白和微妙字重变化传达高端感。"
+}

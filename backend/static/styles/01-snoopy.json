@@ -1,0 +1,36 @@
+{
+  "id": "01-snoopy",
+  "name_zh": "Snoopy温暖漫画",
+  "name_en": "Warm Comic Strip (Peanuts Style)",
+  "tier": 1,
+  "description": "温暖治愈，角色引导，信息量充足。Charles Schulz风格的漫画——简单的角色说着深刻的话。",
+  "colors": {
+    "primary": "#FFF8E8",
+    "secondary": "#87CEEB",
+    "background": "#FFF8E8",
+    "text": "#333333",
+    "accent": "#8FBC8F",
+    "additional": ["#F4A460"]
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "18pt+",
+    "family": "System default (rounded, warm)"
+  },
+  "use_cases": [
+    "品牌/产品介绍",
+    "教育培训",
+    "个人IP分享",
+    "温暖叙事",
+    "知识科普"
+  ],
+  "sample_image_path": "/static/styles/samples/style-01-snoopy.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "VISUAL REFERENCE: Charles Schulz Peanuts comic strip — warm, philosophical, charming. Characters include round-headed kids, a lovable beagle dog, and a small yellow bird. The world is simple (grass, sky, doghouse, trees) but the ideas are deep. CANVAS: 16:9 aspect ratio, 2048x1152 pixels, high quality rendering. COLOR SYSTEM: Warm cream/newspaper tone background (#FFF8E8), soft muted pastels, warm ink lines (not harsh black). Everything feels like a Sunday morning comic page.",
+  "key_principles": [
+    "描述情绪和世界观，不要微操构图细节",
+    "让AI自由发挥多样性",
+    "避免过度约束角色数量",
+    "信任AI的创造力"
+  ]
+}

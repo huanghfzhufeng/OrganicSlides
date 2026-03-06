@@ -1,0 +1,36 @@
+{
+  "id": "15-vintage-ad",
+  "name_zh": "复古广告Vintage Ad",
+  "name_en": "1950s Vintage Advertisement",
+  "tier": 3,
+  "description": "乐观复古好感。半色调网点，复古丝带横幅，美好生活叙事。",
+  "colors": {
+    "primary": "#FFF8E7",
+    "secondary": "#C0392B",
+    "background": "#FFF8E7",
+    "text": "#1A1A1A",
+    "accent": "#1ABC9C",
+    "additional": ["#8B6914"]
+  },
+  "typography": {
+    "title_size": "42pt+",
+    "body_size": "18pt+",
+    "family": "Bold serif (vintage)"
+  },
+  "use_cases": [
+    "消费品",
+    "零售品牌",
+    "怀旧营销",
+    "生活方式",
+    "品牌故事"
+  ],
+  "sample_image_path": "/static/styles/samples/style-15-vintage-ad.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "1950s vintage advertisement style. Cream white (#FFF8E7), vintage red (#C0392B), mint green (#1ABC9C), warm brown-gold (#8B6914). Optimistic American illustration. Halftone dot patterns. Vintage ribbon banners. Good-life narrative. Nostalgic warmth with contemporary production quality.",
+  "key_principles": [
+    "乐观美式插画",
+    "半色调网点",
+    "复古丝带",
+    "美好生活"
+  ]
+}

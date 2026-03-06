@@ -1,0 +1,35 @@
+{
+  "id": "09-warm-narrative",
+  "name_zh": "温暖叙事",
+  "name_en": "Warm Narrative",
+  "tier": 3,
+  "description": "人物场景生动自然，最有「人情味」。暖色插画叙事。",
+  "colors": {
+    "primary": "#FDF6EC",
+    "secondary": "#E17055",
+    "background": "#FDF6EC",
+    "text": "#3D3D3D",
+    "accent": "#E17055"
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "18pt+",
+    "family": "Friendly sans-serif"
+  },
+  "use_cases": [
+    "用户故事",
+    "品牌故事",
+    "人物叙事",
+    "情感传达",
+    "社区分享"
+  ],
+  "sample_image_path": "/static/styles/samples/style-09-warm-narrative.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Warm narrative illustration style. Warm cream background (#FDF6EC), coral accent (#E17055), deep gray text (#3D3D3D). Warm-toned character illustrations in everyday life scenarios. Human-centric, emotionally resonant. Natural scenes, real-life moments, genuine warmth. Focus on people and relationships.",
+  "key_principles": [
+    "人物为中心",
+    "生活场景真实",
+    "情感温暖",
+    "叙事性强"
+  ]
+}

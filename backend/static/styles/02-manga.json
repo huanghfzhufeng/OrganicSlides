@@ -1,0 +1,35 @@
+{
+  "id": "02-manga",
+  "name_zh": "学習漫画 Manga",
+  "name_en": "Educational Manga",
+  "tier": 1,
+  "description": "角色反应驱动理解，趣味性强。惊讶脸、闪光效果让重点「活」起来。",
+  "colors": {
+    "primary": "#FFFFFF",
+    "secondary": "#FF6B35",
+    "background": "#FFFFFF",
+    "text": "#333333",
+    "accent": "#FFD700"
+  },
+  "typography": {
+    "title_size": "36pt+",
+    "body_size": "18pt+",
+    "family": "Sans-serif (bold, energetic)"
+  },
+  "use_cases": [
+    "教程和培训",
+    "知识分享",
+    "学习内容",
+    "交互式讲解",
+    "趣味教学"
+  ],
+  "sample_image_path": "/static/styles/samples/style-02-manga.png",
+  "render_paths": ["path_a", "path_b"],
+  "base_style_prompt": "Educational manga style with expressive character reactions. Use 3-5 panel layout. Include speed lines and spark effects to emphasize key information. Characters should show surprise, realization, and thinking expressions. Speech bubbles are natural information containers. High energy, clear information hierarchy.",
+  "key_principles": [
+    "3-5面板布局最佳",
+    "速度线和星光增强优先级",
+    "角色反应驱动学习",
+    "对话泡是天然容器"
+  ]
+}
