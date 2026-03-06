@@ -617,7 +617,15 @@ async def update_project_style(
     if render_pref not in ("auto", "path_a", "path_b"):
         render_pref = "auto"
 
+    effective_style_config = {
+        **style_config,
+        "render_path_preference": render_pref,
+        "render_paths": [render_pref] if render_pref in ("path_a", "path_b") else style_config.get("render_paths", ["path_a"]),
+    }
+
     updated_state = await _merge_session_state(data.session_id, {
+        "style_id": data.style_id,
+        "style_config": effective_style_config,
         "theme_config": {
             "style_id": data.style_id,
             "style": style_config.get("id", data.style_id),
@@ -626,13 +634,15 @@ async def update_project_style(
             "tier": style_config.get("tier", 1),
             "colors": style_config.get("colors", {}),
             "typography": style_config.get("typography", {}),
-            "render_paths": style_config.get("render_paths", ["path_a"]),
+            "render_paths": effective_style_config["render_paths"],
             "base_style_prompt": style_config.get("base_style_prompt", ""),
             "sample_image_path": style_config.get("sample_image_path", ""),
             "render_path_preference": render_pref,
         }
     }) or {
         **state,
+        "style_id": data.style_id,
+        "style_config": effective_style_config,
         "theme_config": {
             "style_id": data.style_id,
             "style": style_config.get("id", data.style_id),
@@ -641,7 +651,7 @@ async def update_project_style(
             "tier": style_config.get("tier", 1),
             "colors": style_config.get("colors", {}),
             "typography": style_config.get("typography", {}),
-            "render_paths": style_config.get("render_paths", ["path_a"]),
+            "render_paths": effective_style_config["render_paths"],
             "base_style_prompt": style_config.get("base_style_prompt", ""),
             "sample_image_path": style_config.get("sample_image_path", ""),
             "render_path_preference": render_pref,

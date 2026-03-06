@@ -10,6 +10,7 @@ from typing import Literal
 from langgraph.graph import StateGraph, END
 
 from state import PresentationState
+from rendering_policy import effective_render_paths, enforce_render_path_preference
 from agents import (
     researcher_agent,
     planner_agent,
@@ -169,13 +170,15 @@ def _validate_render_plan(plan: dict, style_config: dict) -> dict:
     Validate and fill in missing fields in a render plan.
     Returns a new dict (immutable pattern).
     """
-    render_path = plan.get("render_path", "path_a")
+    render_path = enforce_render_path_preference(plan.get("render_path", "path_a"), style_config)
     colors = style_config.get("colors", {}) if style_config else {}
 
     return {
         "page_number": plan.get("page_number", 0),
         "render_path": render_path,
         "layout_name": plan.get("layout_name", "bullet_list"),
+        "title": plan.get("title", ""),
+        "content": plan.get("content", {}),
         "html_content": plan.get("html_content"),
         "image_prompt": plan.get("image_prompt"),
         "style_notes": plan.get("style_notes", ""),
@@ -196,8 +199,13 @@ def _build_fallback_plans(slides_data: list, config: dict) -> list:
     return [
         {
             "page_number": slide.get("page_number", i + 1),
-            "render_path": slide.get("path_hint", "path_a") if slide.get("path_hint") in ("path_a", "path_b") else "path_a",
+            "render_path": enforce_render_path_preference(
+                slide.get("path_hint", "path_a") if slide.get("path_hint") in ("path_a", "path_b") else "path_a",
+                config,
+            ),
             "layout_name": slide.get("layout_intent", "bullet_list"),
+            "title": slide.get("title", ""),
+            "content": slide.get("content", {}),
             "html_content": slide.get("html_content"),
             "image_prompt": slide.get("image_prompt"),
             "style_notes": "Fallback plan from slides_data",
@@ -221,11 +229,12 @@ def _build_style_config_from_theme(theme_config: dict) -> dict:
         "name_zh": theme_config.get("name_zh", ""),
         "name_en": theme_config.get("name_en", theme_config.get("style", "Organic")),
         "tier": 1,
-        "render_paths": ["path_a"],
+        "render_paths": effective_render_paths(theme_config),
         "colors": colors,
         "typography": theme_config.get("typography", {}),
         "base_style_prompt": None,
         "sample_image_path": "",
+        "render_path_preference": theme_config.get("render_path_preference", "auto"),
     }
 
 

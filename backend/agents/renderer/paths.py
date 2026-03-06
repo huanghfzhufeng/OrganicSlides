@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import settings
+from rendering_policy import enforce_render_path_preference
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +101,12 @@ def _choose_render_path(slide_data: dict, style_config: dict) -> str:
       2. First entry in style_config['render_paths']
       3. RENDER_PATH_DEFAULT setting (default "auto" → path_a)
     """
-    override = slide_data.get("render_path")
-    if override in ("path_a", "path_b"):
-        return override
+    preference_applied = enforce_render_path_preference(
+        slide_data.get("render_path", "auto"),
+        style_config,
+    )
+    if preference_applied in ("path_a", "path_b"):
+        return preference_applied
 
     style_paths = style_config.get("render_paths", [])
     if style_paths:
@@ -375,6 +379,10 @@ def render_path_b(
 
 def _build_image_prompt(slide_data: dict, style_config: dict) -> str:
     """Compose an image generation prompt from style + slide content."""
+    explicit_prompt = slide_data.get("image_prompt")
+    if explicit_prompt:
+        return explicit_prompt
+
     base_prompt = style_config.get("base_style_prompt", "")
 
     title = slide_data.get("title", "")
