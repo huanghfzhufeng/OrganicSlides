@@ -24,6 +24,13 @@ from graph import get_main_app, get_resume_app
 from database.postgres import get_db, init_db, close_db
 from database.redis_client import redis_client
 from database.models import User, Project
+from database.project_tracking_store import (
+    create_generation_job,
+    create_project_revision,
+    record_job_event,
+    sync_project_state,
+    update_generation_job,
+)
 from database.workflow_state_store import (
     load_workflow_state,
     save_workflow_state,
@@ -76,6 +83,7 @@ async def _save_session_state(
 ) -> dict:
     """Persist workflow state durably, then refresh the Redis cache."""
     persisted = await save_workflow_state(session_id, state, project_id=project_id)
+    await sync_project_state(session_id, persisted)
     await _cache_session_state(session_id, persisted)
     return persisted
 
@@ -86,6 +94,7 @@ async def _merge_session_state(session_id: str, updates: dict) -> Optional[dict]
     if persisted is None:
         return None
 
+    await sync_project_state(session_id, persisted)
     await _cache_session_state(session_id, persisted)
     return persisted
 
@@ -192,6 +201,8 @@ class StyleUpdate(BaseModel):
 async def generate_sse_events(session_id: str, state: PresentationState):
     """生成 SSE 事件流"""
     main_app = get_main_app()
+    job = await create_generation_job(session_id, "start_workflow", dict(state))
+    job_id = job["job_id"]
     
     config = {"configurable": {"thread_id": session_id}}
     
@@ -211,10 +222,11 @@ async def generate_sse_events(session_id: str, state: PresentationState):
                     "status": status,
                     "message": messages[-1]["content"] if messages else ""
                 }
-                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                
-                await _merge_session_state(session_id, node_output)
+                persisted_state = await _merge_session_state(session_id, node_output) or dict(state)
+                await update_generation_job(job_id, state=persisted_state, status=status)
+                await record_job_event(session_id, data["type"], data, job_id=job_id)
                 await _append_session_log(session_id, data)
+                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
                 
                 await asyncio.sleep(0.1)
         
@@ -222,12 +234,38 @@ async def generate_sse_events(session_id: str, state: PresentationState):
         final_state = await _load_session_state(session_id) or {}
         
         if final_state.get("current_status") == "waiting_for_outline_approval":
-            yield f"data: {json.dumps({'type': 'hitl', 'status': 'waiting_for_approval', 'outline': final_state.get('outline', [])}, ensure_ascii=False)}\n\n"
+            hitl_data = {
+                "type": "hitl",
+                "status": "waiting_for_approval",
+                "outline": final_state.get("outline", []),
+            }
+            await update_generation_job(
+                job_id,
+                state=final_state,
+                status="waiting_for_outline_approval",
+            )
+            await record_job_event(session_id, hitl_data["type"], hitl_data, job_id=job_id)
+            await create_project_revision(session_id, "outline_generated", final_state)
+            yield f"data: {json.dumps(hitl_data, ensure_ascii=False)}\n\n"
         else:
-            yield f"data: {json.dumps({'type': 'complete', 'status': 'done'}, ensure_ascii=False)}\n\n"
+            complete_data = {"type": "complete", "status": "done"}
+            await update_generation_job(job_id, state=final_state, status="completed")
+            await record_job_event(session_id, complete_data["type"], complete_data, job_id=job_id)
+            await create_project_revision(session_id, "generation_completed", final_state)
+            yield f"data: {json.dumps(complete_data, ensure_ascii=False)}\n\n"
             
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        current_state = await _load_session_state(session_id) or dict(state)
+        error_data = {"type": "error", "status": "error", "message": str(e)}
+        await update_generation_job(
+            job_id,
+            state=current_state,
+            status="error",
+            error_message=str(e),
+        )
+        await record_job_event(session_id, error_data["type"], error_data, job_id=job_id)
+        await create_project_revision(session_id, "generation_failed", current_state)
+        yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
 
 
 async def generate_resume_sse_events(session_id: str):
@@ -241,6 +279,8 @@ async def generate_resume_sse_events(session_id: str):
 
     state["outline_approved"] = True
     await _save_session_state(session_id, state)
+    job = await create_generation_job(session_id, "resume_workflow", dict(state))
+    job_id = job["job_id"]
 
     config = {"configurable": {"thread_id": f"{session_id}_resume"}}
 
@@ -261,6 +301,9 @@ async def generate_resume_sse_events(session_id: str):
                     "status": status,
                     "message": messages[-1]["content"] if messages else ""
                 }
+                persisted_state = await _merge_session_state(session_id, node_output) or dict(state)
+                await update_generation_job(job_id, state=persisted_state, status=status)
+                await record_job_event(session_id, data["type"], data, job_id=job_id)
                 yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
                 # Emit individual render_progress events if the renderer produced them
@@ -268,19 +311,36 @@ async def generate_resume_sse_events(session_id: str):
                     "render_progress_events", []
                 )
                 for rpe in render_progress_events:
+                    await record_job_event(session_id, rpe.get("type", "render_progress"), rpe, job_id=job_id)
                     yield f"data: {json.dumps(rpe, ensure_ascii=False)}\n\n"
 
-                await _merge_session_state(session_id, node_output)
                 await _append_session_log(session_id, data)
                 await asyncio.sleep(0.1)
 
         final_state = await _load_session_state(session_id) or {}
         pptx_path = final_state.get("pptx_path", "")
-
-        yield f"data: {json.dumps({'type': 'complete', 'status': 'done', 'pptx_path': pptx_path}, ensure_ascii=False)}\n\n"
+        complete_data = {
+            "type": "complete",
+            "status": "done",
+            "pptx_path": pptx_path,
+        }
+        await update_generation_job(job_id, state=final_state, status="completed")
+        await record_job_event(session_id, complete_data["type"], complete_data, job_id=job_id)
+        await create_project_revision(session_id, "generation_completed", final_state)
+        yield f"data: {json.dumps(complete_data, ensure_ascii=False)}\n\n"
 
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        current_state = await _load_session_state(session_id) or dict(state)
+        error_data = {"type": "error", "status": "error", "message": str(e)}
+        await update_generation_job(
+            job_id,
+            state=current_state,
+            status="error",
+            error_message=str(e),
+        )
+        await record_job_event(session_id, error_data["type"], error_data, job_id=job_id)
+        await create_project_revision(session_id, "generation_failed", current_state)
+        yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
 
 
 # ==================== API 端点 ====================
@@ -406,7 +466,7 @@ async def create_project(
     )
 
     # 保存到持久化工作流状态存储
-    await _save_session_state(session_id, state)
+    persisted_state = await _save_session_state(session_id, state)
 
     # 如果用户已登录，保存到数据库
     if current_user:
@@ -419,7 +479,14 @@ async def create_project(
         )
         db.add(db_project)
         await db.commit()
-        await _save_session_state(session_id, state, project_id=str(db_project.id))
+        persisted_state = await _save_session_state(session_id, state, project_id=str(db_project.id))
+
+    await create_project_revision(
+        session_id,
+        "project_created",
+        persisted_state,
+        project_id=str(db_project.id) if current_user else None,
+    )
 
     return {"session_id": session_id, "status": "created"}
 
@@ -458,10 +525,7 @@ async def get_outline(session_id: str):
 
 
 @app.post("/api/v1/workflow/outline/update")
-async def update_outline(
-    data: OutlineUpdate,
-    db: AsyncSession = Depends(get_db)
-):
+async def update_outline(data: OutlineUpdate):
     """
     HITL 接口：用户修改大纲
     """
@@ -469,19 +533,16 @@ async def update_outline(
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    await _merge_session_state(data.session_id, {
+    updated_state = await _merge_session_state(data.session_id, {
         "outline": data.outline,
         "outline_approved": True
-    })
+    }) or {
+        **state,
+        "outline": data.outline,
+        "outline_approved": True,
+    }
     
-    # 更新数据库
-    from sqlalchemy import update
-    await db.execute(
-        update(Project)
-        .where(Project.id == uuid.UUID(data.session_id))
-        .values(outline=data.outline, status="outline_approved")
-    )
-    await db.commit()
+    await create_project_revision(data.session_id, "outline_updated", updated_state)
     
     return {"status": "outline_updated", "outline": data.outline}
 
@@ -511,7 +572,7 @@ async def update_project_style(data: StyleUpdate):
     if render_pref not in ("auto", "path_a", "path_b"):
         render_pref = "auto"
 
-    await _merge_session_state(data.session_id, {
+    updated_state = await _merge_session_state(data.session_id, {
         "theme_config": {
             "style_id": data.style_id,
             "style": style_config.get("id", data.style_id),
@@ -525,7 +586,23 @@ async def update_project_style(data: StyleUpdate):
             "sample_image_path": style_config.get("sample_image_path", ""),
             "render_path_preference": render_pref,
         }
-    })
+    }) or {
+        **state,
+        "theme_config": {
+            "style_id": data.style_id,
+            "style": style_config.get("id", data.style_id),
+            "name_zh": style_config.get("name_zh", ""),
+            "name_en": style_config.get("name_en", ""),
+            "tier": style_config.get("tier", 1),
+            "colors": style_config.get("colors", {}),
+            "typography": style_config.get("typography", {}),
+            "render_paths": style_config.get("render_paths", ["path_a"]),
+            "base_style_prompt": style_config.get("base_style_prompt", ""),
+            "sample_image_path": style_config.get("sample_image_path", ""),
+            "render_path_preference": render_pref,
+        },
+    }
+    await create_project_revision(data.session_id, "style_updated", updated_state)
 
     return {
         "status": "style_updated",

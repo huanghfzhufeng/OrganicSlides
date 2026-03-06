@@ -65,6 +65,62 @@ class WorkflowSession(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ProjectRevision(Base):
+    """项目修订快照表"""
+    __tablename__ = "project_revisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True)
+    session_id = Column(String(36), nullable=False, index=True)
+
+    revision_number = Column(Integer, nullable=False)
+    revision_type = Column(String(50), nullable=False, index=True)
+    status = Column(String(50), default="created", nullable=False, index=True)
+    theme = Column(String(100), nullable=True)
+    outline = Column(JSON, default=list, nullable=False)
+    state_snapshot = Column(JSON, default=dict, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class GenerationJob(Base):
+    """生成任务表"""
+    __tablename__ = "generation_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True)
+    session_id = Column(String(36), nullable=False, index=True)
+
+    trigger = Column(String(50), nullable=False, index=True)
+    status = Column(String(50), default="created", nullable=False, index=True)
+    current_agent = Column(String(50), default="", nullable=False)
+    error_message = Column(Text, nullable=True)
+    pptx_path = Column(String(255), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class JobEvent(Base):
+    """任务事件日志表"""
+    __tablename__ = "job_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("generation_jobs.id"), nullable=True, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True)
+    session_id = Column(String(36), nullable=False, index=True)
+
+    event_type = Column(String(50), nullable=False, index=True)
+    agent = Column(String(50), default="", nullable=False)
+    status = Column(String(50), default="", nullable=False)
+    message = Column(Text, default="", nullable=False)
+    payload = Column(JSON, default=dict, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class Slide(Base):
     """幻灯片表"""
     __tablename__ = "slides"
