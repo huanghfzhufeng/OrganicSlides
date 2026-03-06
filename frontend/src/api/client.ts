@@ -29,6 +29,7 @@ export interface Style {
 export interface ProjectResponse {
     session_id: string;
     status: string;
+    session_access_token: string;
 }
 
 export interface OutlineItem {
@@ -81,6 +82,16 @@ export const tokenManager = {
         const token = localStorage.getItem(TOKEN_KEY);
         return token ? { 'Authorization': `Bearer ${token}` } : {};
     }
+};
+
+const withProjectAccessToken = (url: string, sessionAccessToken?: string): string => {
+    if (!sessionAccessToken) {
+        return url;
+    }
+
+    const urlObj = new URL(url);
+    urlObj.searchParams.set('access_token', sessionAccessToken);
+    return urlObj.toString();
 };
 
 // ==================== API 方法 ====================
@@ -151,39 +162,46 @@ export const api = {
         return response.json();
     },
 
-    getOutline: async (sessionId: string): Promise<OutlineResponse> => {
-        const response = await fetch(`${API_BASE_URL}/workflow/outline/${sessionId}`);
+    getOutline: async (sessionId: string, sessionAccessToken?: string): Promise<OutlineResponse> => {
+        const response = await fetch(
+            withProjectAccessToken(`${API_BASE_URL}/workflow/outline/${sessionId}`, sessionAccessToken)
+        );
         if (!response.ok) throw new Error('Failed to fetch outline');
         return response.json();
     },
 
-    updateOutline: async (sessionId: string, outline: OutlineItem[]): Promise<any> => {
+    updateOutline: async (sessionId: string, outline: OutlineItem[], sessionAccessToken?: string): Promise<any> => {
         const response = await fetch(`${API_BASE_URL}/workflow/outline/update`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 ...tokenManager.getHeaders()
             },
-            body: JSON.stringify({ session_id: sessionId, outline }),
+            body: JSON.stringify({ session_id: sessionId, outline, access_token: sessionAccessToken ?? null }),
         });
         if (!response.ok) throw new Error('Failed to update outline');
         return response.json();
     },
 
-    getDownloadUrl: (sessionId: string) => {
-        return `${API_BASE_URL}/project/download/${sessionId}`;
+    getDownloadUrl: (sessionId: string, sessionAccessToken?: string) => {
+        return withProjectAccessToken(`${API_BASE_URL}/project/download/${sessionId}`, sessionAccessToken);
     },
 
-    getStartWorkflowUrl: (sessionId: string) => {
-        return `${API_BASE_URL}/workflow/start/${sessionId}`;
+    getStartWorkflowUrl: (sessionId: string, sessionAccessToken?: string) => {
+        return withProjectAccessToken(`${API_BASE_URL}/workflow/start/${sessionId}`, sessionAccessToken);
     },
 
-    getResumeWorkflowUrl: (sessionId: string) => {
-        return `${API_BASE_URL}/workflow/resume/${sessionId}`;
+    getResumeWorkflowUrl: (sessionId: string, sessionAccessToken?: string) => {
+        return withProjectAccessToken(`${API_BASE_URL}/workflow/resume/${sessionId}`, sessionAccessToken);
     },
 
     // 更新会话风格（在大纲确认后、恢复工作流前调用）
-    updateSessionStyle: async (sessionId: string, styleId: string, renderPathPreference?: string): Promise<void> => {
+    updateSessionStyle: async (
+        sessionId: string,
+        styleId: string,
+        renderPathPreference?: string,
+        sessionAccessToken?: string,
+    ): Promise<void> => {
         const response = await fetch(`${API_BASE_URL}/project/style`, {
             method: 'POST',
             headers: {
@@ -194,6 +212,7 @@ export const api = {
                 session_id: sessionId,
                 style_id: styleId,
                 render_path_preference: renderPathPreference ?? 'auto',
+                access_token: sessionAccessToken ?? null,
             }),
         });
         if (!response.ok) throw new Error('Failed to update session style');

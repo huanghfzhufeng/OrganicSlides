@@ -37,6 +37,7 @@ from database.workflow_state_store import (
     update_workflow_state,
 )
 from auth import auth_router, get_current_user, get_current_active_user
+from auth.service import AuthService
 from styles.registry import get_registry
 from styles.recommender import StyleRecommender
 
@@ -166,6 +167,7 @@ class ProjectCreate(BaseModel):
 class OutlineUpdate(BaseModel):
     session_id: str
     outline: List[Dict[str, Any]]
+    access_token: Optional[str] = None
 
 
 class WorkflowResume(BaseModel):
@@ -176,6 +178,42 @@ class StyleUpdate(BaseModel):
     session_id: str
     style_id: str
     render_path_preference: str = "auto"  # "auto" | "path_a" | "path_b"
+    access_token: Optional[str] = None
+
+
+async def _authorize_project_access(
+    session_id: str,
+    access_token: Optional[str],
+    current_user: Optional[User],
+    db: AsyncSession,
+) -> None:
+    """Allow project access to the owning user or a valid session access token."""
+    if access_token:
+        authorized_session_id = AuthService.decode_project_access_token(access_token)
+        if authorized_session_id == session_id:
+            return
+
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Project access token required")
+
+    try:
+        project_uuid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_uuid,
+            Project.user_id == current_user.id,
+        )
+    )
+    project = result.scalar_one_or_none()
+    if project is not None:
+        return
+
+    raise HTTPException(status_code=403, detail="Forbidden")
 
 
 # ==================== SSE 流式响应 ====================
@@ -447,6 +485,7 @@ async def create_project(
 
     # 保存到持久化工作流状态存储
     persisted_state = await _save_session_state(session_id, state)
+    session_access = AuthService.create_project_access_token(session_id)
 
     # 如果用户已登录，保存到数据库
     if current_user:
@@ -468,14 +507,24 @@ async def create_project(
         project_id=str(db_project.id) if current_user else None,
     )
 
-    return {"session_id": session_id, "status": "created"}
+    return {
+        "session_id": session_id,
+        "status": "created",
+        "session_access_token": session_access.access_token,
+    }
 
 
 @app.get("/api/v1/workflow/start/{session_id}")
-async def start_workflow(session_id: str):
+async def start_workflow(
+    session_id: str,
+    access_token: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     启动工作流（SSE 流式响应）
     """
+    await _authorize_project_access(session_id, access_token, current_user, db)
     state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -492,8 +541,14 @@ async def start_workflow(session_id: str):
 
 
 @app.get("/api/v1/workflow/outline/{session_id}")
-async def get_outline(session_id: str):
+async def get_outline(
+    session_id: str,
+    access_token: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """获取生成的大纲"""
+    await _authorize_project_access(session_id, access_token, current_user, db)
     state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -505,10 +560,15 @@ async def get_outline(session_id: str):
 
 
 @app.post("/api/v1/workflow/outline/update")
-async def update_outline(data: OutlineUpdate):
+async def update_outline(
+    data: OutlineUpdate,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     HITL 接口：用户修改大纲
     """
+    await _authorize_project_access(data.session_id, data.access_token, current_user, db)
     state = await _load_session_state(data.session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -528,7 +588,11 @@ async def update_outline(data: OutlineUpdate):
 
 
 @app.post("/api/v1/project/style")
-async def update_project_style(data: StyleUpdate):
+async def update_project_style(
+    data: StyleUpdate,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     更新项目的视觉风格（在大纲确认后、恢复工作流前调用）。
 
@@ -536,6 +600,7 @@ async def update_project_style(data: StyleUpdate):
     created (step 0) and outline approved (step 2). This endpoint lets
     the frontend attach the chosen style before resuming generation.
     """
+    await _authorize_project_access(data.session_id, data.access_token, current_user, db)
     state = await _load_session_state(data.session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -592,10 +657,16 @@ async def update_project_style(data: StyleUpdate):
 
 
 @app.get("/api/v1/workflow/resume/{session_id}")
-async def resume_workflow(session_id: str):
+async def resume_workflow(
+    session_id: str,
+    access_token: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     恢复工作流（用户确认大纲后）
     """
+    await _authorize_project_access(session_id, access_token, current_user, db)
     state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -612,8 +683,14 @@ async def resume_workflow(session_id: str):
 
 
 @app.get("/api/v1/project/download/{session_id}")
-async def download_pptx(session_id: str):
+async def download_pptx(
+    session_id: str,
+    access_token: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """下载生成的 PPTX 文件"""
+    await _authorize_project_access(session_id, access_token, current_user, db)
     state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -630,8 +707,14 @@ async def download_pptx(session_id: str):
 
 
 @app.get("/api/v1/project/status/{session_id}")
-async def get_project_status(session_id: str):
+async def get_project_status(
+    session_id: str,
+    access_token: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """获取项目状态"""
+    await _authorize_project_access(session_id, access_token, current_user, db)
     state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")

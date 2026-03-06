@@ -69,6 +69,14 @@ class TestStylesAPI:
         self.app.dependency_overrides.clear()
         self.client.close()
 
+    def _create_project(self, prompt="Test presentation", style="organic"):
+        response = self.client.post(
+            "/api/v1/project/create",
+            json={"prompt": prompt, "style": style}
+        )
+        assert response.status_code == 200
+        return response.json()
+
     def test_health_check(self):
         """Test API health check endpoint"""
         response = self.client.get("/")
@@ -97,6 +105,7 @@ class TestStylesAPI:
         assert response.status_code == 200
         data = response.json()
         assert "session_id" in data
+        assert "session_access_token" in data
         assert data["status"] == "created"
         assert data["session_id"] in self.session_store
 
@@ -137,22 +146,20 @@ class TestStylesAPI:
             pytest.fail(f"Invalid session_id format: {session_id}")
 
     def test_project_status_not_found(self):
-        """Test project status with invalid session_id"""
+        """Project endpoints require access token when no user session exists"""
         response = self.client.get("/api/v1/project/status/invalid-id")
-        assert response.status_code == 404
+        assert response.status_code == 401
 
     def test_project_status_existing_session(self):
-        """Test project status for existing session"""
-        # Create a project first
-        create_response = self.client.post(
-            "/api/v1/project/create",
-            json={"prompt": "Test"}
-        )
-        assert create_response.status_code == 200
-        session_id = create_response.json()["session_id"]
+        """Test project status for existing session with access token"""
+        project = self._create_project(prompt="Test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
 
-        # Get status
-        response = self.client.get(f"/api/v1/project/status/{session_id}")
+        response = self.client.get(
+            f"/api/v1/project/status/{session_id}",
+            params={"access_token": access_token},
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["session_id"] == session_id
@@ -160,22 +167,20 @@ class TestStylesAPI:
         assert data["current_agent"] == ""
 
     def test_workflow_outline_not_found(self):
-        """Test getting outline for non-existent session"""
+        """Outline endpoint requires access token when no user session exists"""
         response = self.client.get("/api/v1/workflow/outline/invalid-id")
-        assert response.status_code == 404
+        assert response.status_code == 401
 
     def test_workflow_outline_existing_session(self):
-        """Test getting outline for existing session"""
-        # Create a project
-        create_response = self.client.post(
-            "/api/v1/project/create",
-            json={"prompt": "Test presentation"}
-        )
-        assert create_response.status_code == 200
-        session_id = create_response.json()["session_id"]
+        """Test getting outline for existing session with access token"""
+        project = self._create_project(prompt="Test presentation")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
 
-        # Get outline
-        response = self.client.get(f"/api/v1/workflow/outline/{session_id}")
+        response = self.client.get(
+            f"/api/v1/workflow/outline/{session_id}",
+            params={"access_token": access_token},
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["outline"] == []
@@ -183,17 +188,15 @@ class TestStylesAPI:
 
     def test_update_outline_records_revision(self):
         """Test outline updates create a new revision snapshot"""
-        create_response = self.client.post(
-            "/api/v1/project/create",
-            json={"prompt": "Outline test"}
-        )
-        session_id = create_response.json()["session_id"]
+        project = self._create_project(prompt="Outline test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
         self.revisions.clear()
 
         outline = [{"id": "1", "title": "Test assertion", "type": "content"}]
         response = self.client.post(
             "/api/v1/workflow/outline/update",
-            json={"session_id": session_id, "outline": outline}
+            json={"session_id": session_id, "outline": outline, "access_token": access_token}
         )
 
         assert response.status_code == 200
@@ -203,11 +206,9 @@ class TestStylesAPI:
 
     def test_update_project_style_records_revision(self):
         """Test style updates create a new revision snapshot"""
-        create_response = self.client.post(
-            "/api/v1/project/create",
-            json={"prompt": "Style revision test"}
-        )
-        session_id = create_response.json()["session_id"]
+        project = self._create_project(prompt="Style revision test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
         self.revisions.clear()
 
         response = self.client.post(
@@ -216,6 +217,7 @@ class TestStylesAPI:
                 "session_id": session_id,
                 "style_id": "01-snoopy",
                 "render_path_preference": "path_a",
+                "access_token": access_token,
             }
         )
 
@@ -237,6 +239,56 @@ class TestStylesAPI:
             session_id = response.json()["session_id"]
             assert response.json()["status"] == "created"
             assert self.session_store[session_id]["theme_config"]["style"] == style
+
+    def test_workflow_start_requires_access_token(self):
+        """SSE start endpoint should reject anonymous access without session token"""
+        project = self._create_project(prompt="SSE auth test")
+        session_id = project["session_id"]
+
+        response = self.client.get(f"/api/v1/workflow/start/{session_id}")
+        assert response.status_code == 401
+
+    def test_workflow_start_accepts_access_token(self, monkeypatch):
+        """SSE start endpoint should allow valid session token"""
+        project = self._create_project(prompt="SSE auth allow test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+
+        async def fake_generate_sse_events(session_id_param, state):
+            yield "data: {\"type\":\"complete\",\"status\":\"done\"}\n\n"
+
+        monkeypatch.setattr(self.main, "generate_sse_events", fake_generate_sse_events)
+
+        response = self.client.get(
+            f"/api/v1/workflow/start/{session_id}",
+            params={"access_token": access_token},
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+    def test_download_requires_access_token(self, tmp_path):
+        """Download endpoint should require the session access token"""
+        project = self._create_project(prompt="Download auth test")
+        session_id = project["session_id"]
+        self.session_store[session_id]["pptx_path"] = str(tmp_path / "deck.pptx")
+        Path(self.session_store[session_id]["pptx_path"]).write_bytes(b"pptx")
+
+        response = self.client.get(f"/api/v1/project/download/{session_id}")
+        assert response.status_code == 401
+
+    def test_download_accepts_access_token(self, tmp_path):
+        """Download endpoint should allow valid session token"""
+        project = self._create_project(prompt="Download auth allow test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+        self.session_store[session_id]["pptx_path"] = str(tmp_path / "deck.pptx")
+        Path(self.session_store[session_id]["pptx_path"]).write_bytes(b"pptx")
+
+        response = self.client.get(
+            f"/api/v1/project/download/{session_id}",
+            params={"access_token": access_token},
+        )
+        assert response.status_code == 200
 
 
 @pytest.mark.integration
