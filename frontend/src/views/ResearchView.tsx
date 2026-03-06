@@ -8,6 +8,7 @@ import ErrorMessage from '../components/ErrorMessage';
 
 interface ResearchViewProps {
     sessionId: string;
+    sessionAccessToken: string;
     onComplete: (outline: OutlineItem[]) => void;
 }
 
@@ -28,7 +29,7 @@ function parseResearcherStats(message: string): Partial<ResearchStats> {
     return result;
 }
 
-const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, onComplete }) => {
+const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, sessionAccessToken, onComplete }) => {
     const [logs, setLogs] = useState<any[]>([]);
     const [currentStatus, setCurrentStatus] = useState("正在初始化研究...");
     const [stats, setStats] = useState<ResearchStats>({
@@ -40,7 +41,7 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, onComplete }) =>
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        const eventSource = new EventSource(api.getStartWorkflowUrl(sessionId));
+        const eventSource = new EventSource(api.getStartWorkflowUrl(sessionId, sessionAccessToken));
 
         eventSource.onmessage = (event) => {
             const data = JSON.parse(event.data);
@@ -79,7 +80,7 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, onComplete }) =>
         };
 
         return () => eventSource.close();
-    }, [sessionId, onComplete]);
+    }, [sessionId, sessionAccessToken, onComplete]);
 
     if (error) {
         return (

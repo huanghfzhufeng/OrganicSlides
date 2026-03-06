@@ -19,6 +19,7 @@ function App() {
   const [step, setStep] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionAccessToken, setSessionAccessToken] = useState<string | null>(null);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [selectedStyleId, setSelectedStyleId] = useState("");
   const [, setRenderPathPreference] = useState<RenderPathPreference>('auto');
@@ -55,12 +56,14 @@ function App() {
     setUser(null);
     setStep(0);
     setSessionId(null);
+    setSessionAccessToken(null);
     setSelectedStyleId('');
   };
 
   const handleRestart = () => {
     setStep(0);
     setSessionId(null);
+    setSessionAccessToken(null);
     setSelectedStyleId('');
     setRenderPathPreference('auto');
   };
@@ -70,6 +73,7 @@ function App() {
       setError(null);
       const res = await api.createProject(prompt);
       setSessionId(res.session_id);
+      setSessionAccessToken(res.session_access_token);
       setStep(1);
     } catch (err: any) {
       setError(err.message);
@@ -84,11 +88,11 @@ function App() {
 
   // Render path chosen → pass both style_id and render_path_preference to backend, start generation
   const handleRenderPathSelected = async (preference: RenderPathPreference) => {
-    if (!sessionId) return;
+    if (!sessionId || !sessionAccessToken) return;
     try {
       setError(null);
       setRenderPathPreference(preference);
-      await api.updateSessionStyle(sessionId, selectedStyleId, preference);
+      await api.updateSessionStyle(sessionId, selectedStyleId, preference, sessionAccessToken);
       setStep(4);
     } catch (err: any) {
       setError(err.message);
@@ -96,9 +100,9 @@ function App() {
   };
 
   const handleOutlineConfirm = async (updatedOutline: OutlineItem[]) => {
-    if (!sessionId) return;
+    if (!sessionId || !sessionAccessToken) return;
     try {
-      await api.updateOutline(sessionId, updatedOutline);
+      await api.updateOutline(sessionId, updatedOutline, sessionAccessToken);
       setOutline(updatedOutline);
       setStep(3);
     } catch (err: any) {
@@ -170,9 +174,10 @@ function App() {
                 />
               )}
 
-              {step === 1 && sessionId && (
+              {step === 1 && sessionId && sessionAccessToken && (
                 <ResearchView
                   sessionId={sessionId}
+                  sessionAccessToken={sessionAccessToken}
                   onComplete={(finalOutline) => {
                     setOutline(finalOutline);
                     setStep(2);
@@ -201,9 +206,10 @@ function App() {
                 />
               )}
 
-              {step === 4 && sessionId && (
+              {step === 4 && sessionId && sessionAccessToken && (
                 <GenerationResultView
                   sessionId={sessionId}
+                  sessionAccessToken={sessionAccessToken}
                 />
               )}
             </div>

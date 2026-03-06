@@ -39,7 +39,8 @@ Examples:
   Validation completed on `2026-03-07` with PostgreSQL-backed project revisions, generation jobs, job events, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [x] `REQ-006` Remove Redis-as-source-of-truth session assumptions.
   Validation completed on `2026-03-07` with PostgreSQL-only workflow state reads, optional Redis startup, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-007` Unify auth and authorization behavior across API, SSE, preview, and download flows.
+- [x] `REQ-007` Unify auth and authorization behavior across API, SSE, preview, and download flows.
+  Validation completed on `2026-03-07` with project access tokens across API, SSE, and downloads, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-008` Enforce render path preference through the entire generation pipeline.
 - [ ] `REQ-009` Replace silent generic fallbacks with explicit repair, retry, or failure states.
 

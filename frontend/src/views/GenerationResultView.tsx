@@ -13,6 +13,7 @@ import ErrorMessage from '../components/ErrorMessage';
 
 interface GenerationResultViewProps {
     sessionId: string;
+    sessionAccessToken: string;
 }
 
 // ==================== Types ====================
@@ -115,7 +116,7 @@ const SlideCard: React.FC<SlideCardProps> = ({ slide }) => {
 
 // ==================== GenerationResultView ====================
 
-const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId }) => {
+const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, sessionAccessToken }) => {
     const [isDone, setIsDone] = useState(false);
     const [logs, setLogs] = useState<any[]>([]);
     const [slides, setSlides] = useState<SlideProgress[]>([]);
@@ -128,7 +129,7 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId }
     };
 
     useEffect(() => {
-        const eventSource = new EventSource(api.getResumeWorkflowUrl(sessionId));
+        const eventSource = new EventSource(api.getResumeWorkflowUrl(sessionId, sessionAccessToken));
 
         eventSource.onmessage = (event) => {
             const data = JSON.parse(event.data);
@@ -192,7 +193,7 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId }
         };
 
         return () => eventSource.close();
-    }, [sessionId]);
+    }, [sessionId, sessionAccessToken]);
 
     const completedCount = slides.filter(s => s.status === 'complete').length;
     const failedCount = slides.filter(s => s.status === 'failed').length;
@@ -264,7 +265,7 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId }
                 </div>
 
                 {isDone && (
-                    <a href={api.getDownloadUrl(sessionId)} download>
+                    <a href={api.getDownloadUrl(sessionId, sessionAccessToken)} download>
                         <BlobButton variant="primary" icon={Download} className="w-full ripple-btn">
                             下载完整 .pptx
                         </BlobButton>

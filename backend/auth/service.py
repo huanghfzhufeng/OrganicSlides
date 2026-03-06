@@ -2,7 +2,7 @@
 认证业务逻辑
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -22,6 +22,33 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class AuthService:
     """认证服务"""
+
+    @staticmethod
+    def _build_token(subject: str, scope: Optional[str] = None, expires_delta: Optional[timedelta] = None) -> Token:
+        """Create a JWT token for a user or session scope."""
+        if expires_delta:
+            expire = datetime.now(timezone.utc) + expires_delta
+        else:
+            expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+        to_encode = {
+            "sub": subject,
+            "exp": expire,
+            "iat": datetime.now(timezone.utc),
+        }
+        if scope:
+            to_encode["scope"] = scope
+
+        encoded_jwt = jwt.encode(
+            to_encode,
+            settings.JWT_SECRET_KEY,
+            algorithm=settings.JWT_ALGORITHM
+        )
+
+        return Token(
+            access_token=encoded_jwt,
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        )
     
     @staticmethod
     def hash_password(password: str) -> str:
@@ -36,26 +63,15 @@ class AuthService:
     @staticmethod
     def create_access_token(user_id: UUID, expires_delta: Optional[timedelta] = None) -> Token:
         """创建 JWT Token"""
-        if expires_delta:
-            expire = datetime.utcnow() + expires_delta
-        else:
-            expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        
-        to_encode = {
-            "sub": str(user_id),
-            "exp": expire,
-            "iat": datetime.utcnow()
-        }
-        
-        encoded_jwt = jwt.encode(
-            to_encode,
-            settings.JWT_SECRET_KEY,
-            algorithm=settings.JWT_ALGORITHM
-        )
-        
-        return Token(
-            access_token=encoded_jwt,
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        return AuthService._build_token(str(user_id), expires_delta=expires_delta)
+
+    @staticmethod
+    def create_project_access_token(session_id: str, expires_delta: Optional[timedelta] = None) -> Token:
+        """Create a scoped JWT token for project/session access."""
+        return AuthService._build_token(
+            session_id,
+            scope="project_access",
+            expires_delta=expires_delta,
         )
     
     @staticmethod
@@ -67,6 +83,21 @@ class AuthService:
                 settings.JWT_SECRET_KEY,
                 algorithms=[settings.JWT_ALGORITHM]
             )
+            return payload.get("sub")
+        except JWTError:
+            return None
+
+    @staticmethod
+    def decode_project_access_token(token: str) -> Optional[str]:
+        """Decode a project access token and return the authorized session_id."""
+        try:
+            payload = jwt.decode(
+                token,
+                settings.JWT_SECRET_KEY,
+                algorithms=[settings.JWT_ALGORITHM]
+            )
+            if payload.get("scope") != "project_access":
+                return None
             return payload.get("sub")
         except JWTError:
             return None
