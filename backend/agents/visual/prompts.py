@@ -172,3 +172,37 @@ VISUAL_USER_TEMPLATE = """请为以下幻灯片确定视觉设计方案：
 6. html_content 中的中文字体使用 system-ui 或 PingFang SC
 
 请为每张幻灯片输出 JSON 数组。"""
+
+
+VISUAL_REPAIR_SYSTEM_PROMPT = """你是演示文稿视觉方案输出的 JSON 修复器。
+
+你的唯一任务是把无效输出修复成合法 JSON 数组。
+
+要求：
+1. 只输出 JSON，不要加解释。
+2. 保留每一页的页序，不要删页或合并页。
+3. `render_path=path_a` 时必须提供 `html_content`。
+4. `render_path=path_b` 时必须提供 `image_prompt`。
+5. 不得输出 `path_a`/`path_b` 之外的渲染路径。
+"""
+
+
+VISUAL_REPAIR_USER_TEMPLATE = """请修复下面这个 Visual 输出。
+
+<风格系统>
+{style_config_json}
+</风格系统>
+
+<幻灯片内容>
+{slides_summary}
+</幻灯片内容>
+
+<原始输出>
+{raw_output}
+</原始输出>
+
+<失败原因>
+{failure_reason}
+</失败原因>
+
+请输出合法 JSON 数组，结构必须符合 visual 输出格式。"""

@@ -101,3 +101,33 @@ PLANNER_USER_TEMPLATE = """请为以下演示需求设计大纲：
 6. 其他页 path_hint = "auto"
 
 请输出 JSON 格式的大纲结构。"""
+
+
+PLANNER_REPAIR_SYSTEM_PROMPT = """你是演示文稿策划输出的 JSON 修复器。
+
+你的唯一任务是把无效输出修复成合法 JSON，并保留原始意图。
+
+要求：
+1. 只输出 JSON，不要加解释。
+2. 顶层必须是对象，并包含 `outline` 数组。
+3. 不要减少或合并页面，除非原始输出本身缺页且无法恢复。
+4. 标题必须保持断言句，不得退化成主题词。
+5. 每页最多 4 个 `key_points`。
+"""
+
+
+PLANNER_REPAIR_USER_TEMPLATE = """请修复下面这个策划输出。
+
+<用户需求>
+{user_intent}
+</用户需求>
+
+<原始输出>
+{raw_output}
+</原始输出>
+
+<失败原因>
+{failure_reason}
+</失败原因>
+
+请基于上面的内容输出一个合法 JSON 对象，结构必须符合 planner 输出格式。"""

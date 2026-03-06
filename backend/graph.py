@@ -24,11 +24,13 @@ from agents import (
 # Routing conditions
 # ---------------------------------------------------------------------------
 
-def should_continue_after_outline(state: PresentationState) -> Literal["wait_for_approval", "writer"]:
+def should_continue_after_outline(state: PresentationState) -> Literal["wait_for_approval", "writer", "error"]:
     """
     条件路由：检查大纲是否已被用户确认
     这是 HITL (Human-in-the-Loop) 的关键点
     """
+    if state.get("error"):
+        return "error"
     if state.get("outline_approved", False):
         return "writer"
     return "wait_for_approval"
@@ -87,16 +89,25 @@ async def render_preparation_node(state: PresentationState) -> dict:
     theme_config = state.get("theme_config", {})
     slides_data = state.get("slides_data", [])
 
-    # --- 1. Validate or build slide_render_plans ---
+    if not style_config and theme_config:
+        # Build minimal style_config from legacy theme_config for backward compat
+        style_config = _build_style_config_from_theme(theme_config)
+
+    # --- 1. Validate slide_render_plans ---
     if not slide_render_plans and slides_data:
-        # Visual agent was skipped or failed — build minimal plans from slides_data
-        slide_render_plans = _build_fallback_plans(slides_data, style_config or theme_config)
+        message = "Visual 未返回 slide_render_plans，渲染准备阶段拒绝静默回退"
+        return _render_preparation_error(state, message)
+    if not slide_render_plans:
+        return _render_preparation_error(state, "缺少可渲染的 slide_render_plans")
 
     # --- 2. Validate each plan has required fields ---
     validated_plans = []
-    for plan in slide_render_plans:
-        validated = _validate_render_plan(plan, style_config)
-        validated_plans.append(validated)
+    try:
+        for plan in slide_render_plans:
+            validated = _validate_render_plan(plan, style_config)
+            validated_plans.append(validated)
+    except ValueError as exc:
+        return _render_preparation_error(state, str(exc))
 
     # --- 3. Determine overall render_path ---
     # Filter to only path_a and path_b for overall classification
@@ -109,12 +120,7 @@ async def render_preparation_node(state: PresentationState) -> dict:
     else:
         overall_path = "mixed"
 
-    # --- 4. Validate style_config has required fields ---
-    if not style_config and theme_config:
-        # Build minimal style_config from legacy theme_config for backward compat
-        style_config = _build_style_config_from_theme(theme_config)
-
-    # --- 5. Build render_progress tracking list ---
+    # --- 4. Build render_progress tracking list ---
     render_progress = [
         {
             "slide_number": plan.get("page_number", i + 1),
@@ -155,6 +161,7 @@ async def error_node(state: PresentationState) -> dict:
     return {
         "current_status": "error",
         "current_agent": "error_handler",
+        "error": error,
         "messages": state.get("messages", []) + [
             {"role": "system", "content": f"工作流错误: {error}", "agent": "error_handler"}
         ]
@@ -170,17 +177,28 @@ def _validate_render_plan(plan: dict, style_config: dict) -> dict:
     Validate and fill in missing fields in a render plan.
     Returns a new dict (immutable pattern).
     """
+    page_number = plan.get("page_number")
+    if not page_number:
+        raise ValueError("render_preparation: render plan missing page_number")
+
     render_path = enforce_render_path_preference(plan.get("render_path", "path_a"), style_config)
+    html_content = plan.get("html_content")
+    image_prompt = plan.get("image_prompt")
+    if render_path == "path_a" and not html_content:
+        raise ValueError(f"render_preparation: slide {page_number} missing html_content for path_a")
+    if render_path == "path_b" and not image_prompt:
+        raise ValueError(f"render_preparation: slide {page_number} missing image_prompt for path_b")
+
     colors = style_config.get("colors", {}) if style_config else {}
 
     return {
-        "page_number": plan.get("page_number", 0),
+        "page_number": page_number,
         "render_path": render_path,
         "layout_name": plan.get("layout_name", "bullet_list"),
         "title": plan.get("title", ""),
         "content": plan.get("content", {}),
-        "html_content": plan.get("html_content"),
-        "image_prompt": plan.get("image_prompt"),
+        "html_content": html_content if render_path == "path_a" else None,
+        "image_prompt": image_prompt if render_path == "path_b" else None,
         "style_notes": plan.get("style_notes", ""),
         "color_system": plan.get("color_system") or {
             "background": colors.get("background", "#FFFFFF"),
@@ -190,33 +208,19 @@ def _validate_render_plan(plan: dict, style_config: dict) -> dict:
     }
 
 
-def _build_fallback_plans(slides_data: list, config: dict) -> list:
-    """
-    Build minimal slide_render_plans from slides_data when Visual agent output is missing.
-    All slides default to path_a.
-    """
-    colors = config.get("colors", {})
-    return [
-        {
-            "page_number": slide.get("page_number", i + 1),
-            "render_path": enforce_render_path_preference(
-                slide.get("path_hint", "path_a") if slide.get("path_hint") in ("path_a", "path_b") else "path_a",
-                config,
-            ),
-            "layout_name": slide.get("layout_intent", "bullet_list"),
-            "title": slide.get("title", ""),
-            "content": slide.get("content", {}),
-            "html_content": slide.get("html_content"),
-            "image_prompt": slide.get("image_prompt"),
-            "style_notes": "Fallback plan from slides_data",
-            "color_system": {
-                "background": colors.get("background", "#FFFFFF"),
-                "text": colors.get("text", "#1A1A1A"),
-                "accent": colors.get("accent", "#0984E3"),
-            },
-        }
-        for i, slide in enumerate(slides_data)
-    ]
+def _render_preparation_error(state: PresentationState, message: str) -> dict:
+    return {
+        "current_status": "render_preparation_error",
+        "current_agent": "render_prep",
+        "error": message,
+        "messages": state.get("messages", []) + [
+            {
+                "role": "system",
+                "content": f"渲染准备失败: {message}",
+                "agent": "render_prep",
+            }
+        ],
+    }
 
 
 def _build_style_config_from_theme(theme_config: dict) -> dict:
@@ -266,13 +270,21 @@ def create_workflow() -> StateGraph:
 
     # 添加边 - 定义节点间的流转
     workflow.add_edge("input", "researcher")
-    workflow.add_edge("researcher", "planner")
+    workflow.add_conditional_edges(
+        "researcher",
+        check_error,
+        {
+            "error": "error",
+            "continue": "planner",
+        }
+    )
 
     # 条件边 - HITL 中断点
     workflow.add_conditional_edges(
         "planner",
         should_continue_after_outline,
         {
+            "error": "error",
             "wait_for_approval": "wait_for_approval",
             "writer": "writer",
         }
@@ -282,10 +294,38 @@ def create_workflow() -> StateGraph:
     workflow.add_edge("wait_for_approval", END)  # 暂停在这里
 
     # 后续流程（新增 render_preparation 节点）
-    workflow.add_edge("writer", "visual")
-    workflow.add_edge("visual", "render_preparation")  # NEW: validate before rendering
-    workflow.add_edge("render_preparation", "renderer")
-    workflow.add_edge("renderer", END)
+    workflow.add_conditional_edges(
+        "writer",
+        check_error,
+        {
+            "error": "error",
+            "continue": "visual",
+        }
+    )
+    workflow.add_conditional_edges(
+        "visual",
+        check_error,
+        {
+            "error": "error",
+            "continue": "render_preparation",
+        }
+    )
+    workflow.add_conditional_edges(
+        "render_preparation",
+        check_error,
+        {
+            "error": "error",
+            "continue": "renderer",
+        }
+    )
+    workflow.add_conditional_edges(
+        "renderer",
+        check_error,
+        {
+            "error": "error",
+            "continue": END,
+        }
+    )
     workflow.add_edge("error", END)
 
     return workflow
@@ -311,13 +351,43 @@ def create_resume_workflow() -> StateGraph:
     workflow.add_node("visual", visual_agent)
     workflow.add_node("render_preparation", render_preparation_node)  # NEW
     workflow.add_node("renderer", renderer_agent)
+    workflow.add_node("error", error_node)
 
     workflow.set_entry_point("writer")
 
-    workflow.add_edge("writer", "visual")
-    workflow.add_edge("visual", "render_preparation")  # NEW
-    workflow.add_edge("render_preparation", "renderer")
-    workflow.add_edge("renderer", END)
+    workflow.add_conditional_edges(
+        "writer",
+        check_error,
+        {
+            "error": "error",
+            "continue": "visual",
+        }
+    )
+    workflow.add_conditional_edges(
+        "visual",
+        check_error,
+        {
+            "error": "error",
+            "continue": "render_preparation",
+        }
+    )
+    workflow.add_conditional_edges(
+        "render_preparation",
+        check_error,
+        {
+            "error": "error",
+            "continue": "renderer",
+        }
+    )
+    workflow.add_conditional_edges(
+        "renderer",
+        check_error,
+        {
+            "error": "error",
+            "continue": END,
+        }
+    )
+    workflow.add_edge("error", END)
 
     return workflow
 

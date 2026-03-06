@@ -63,6 +63,26 @@ class FakeResumeApp:
         }
 
 
+class FakeErrorResumeApp:
+    async def astream(self, state, config):
+        yield {
+            "writer": {
+                "current_status": "writer_error",
+                "current_agent": "writer",
+                "error": "writer parse failed",
+                "messages": [{"content": "Writer failed"}],
+            }
+        }
+        yield {
+            "error": {
+                "current_status": "error",
+                "current_agent": "error_handler",
+                "error": "writer parse failed",
+                "messages": [{"content": "工作流错误: writer parse failed"}],
+            }
+        }
+
+
 @pytest.mark.unit
 class TestGenerationTracking:
     @pytest.mark.asyncio
@@ -163,3 +183,48 @@ class TestGenerationTracking:
         assert record_event.await_count == 3
         update_job.assert_any_await("job-2", state=final_state, status="completed")
         create_revision.assert_awaited_once_with("session-2", "generation_completed", final_state)
+
+    @pytest.mark.asyncio
+    async def test_generate_resume_sse_events_emits_error_when_workflow_finishes_failed(self, monkeypatch):
+        initial_state = {
+            "session_id": "session-3",
+            "current_status": "waiting_for_outline_approval",
+            "current_agent": "hitl",
+            "outline_approved": False,
+            "messages": [],
+        }
+        final_state = {
+            "session_id": "session-3",
+            "current_status": "error",
+            "current_agent": "error_handler",
+            "error": "writer parse failed",
+        }
+
+        create_job = AsyncMock(return_value={"job_id": "job-3"})
+        update_job = AsyncMock()
+        record_event = AsyncMock()
+        create_revision = AsyncMock()
+        save_state = AsyncMock()
+        merge_state = AsyncMock(side_effect=[final_state, final_state])
+        load_state = AsyncMock(side_effect=[dict(initial_state), final_state])
+
+        monkeypatch.setattr(main, "get_resume_app", lambda: FakeErrorResumeApp())
+        monkeypatch.setattr(main, "create_generation_job", create_job)
+        monkeypatch.setattr(main, "update_generation_job", update_job)
+        monkeypatch.setattr(main, "record_job_event", record_event)
+        monkeypatch.setattr(main, "create_project_revision", create_revision)
+        monkeypatch.setattr(main, "_save_session_state", save_state)
+        monkeypatch.setattr(main, "_merge_session_state", merge_state)
+        monkeypatch.setattr(main, "_load_session_state", load_state)
+
+        chunks = [chunk async for chunk in main.generate_resume_sse_events("session-3")]
+        payloads = _decode_sse_payloads(chunks)
+
+        assert [payload["type"] for payload in payloads] == ["status", "status", "error"]
+        update_job.assert_any_await(
+            "job-3",
+            state=final_state,
+            status="error",
+            error_message="writer parse failed",
+        )
+        create_revision.assert_awaited_once_with("session-3", "generation_failed", final_state)
