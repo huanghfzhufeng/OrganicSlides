@@ -95,7 +95,6 @@ class TestGenerationTracking:
             final_state,
         ])
         load_state = AsyncMock(return_value=final_state)
-        append_log = AsyncMock()
 
         monkeypatch.setattr(main, "get_main_app", lambda: FakeMainApp())
         monkeypatch.setattr(main, "create_generation_job", create_job)
@@ -104,7 +103,6 @@ class TestGenerationTracking:
         monkeypatch.setattr(main, "create_project_revision", create_revision)
         monkeypatch.setattr(main, "_merge_session_state", merge_state)
         monkeypatch.setattr(main, "_load_session_state", load_state)
-        monkeypatch.setattr(main, "_append_session_log", append_log)
 
         chunks = [chunk async for chunk in main.generate_sse_events("session-1", initial_state)]
         payloads = _decode_sse_payloads(chunks)
@@ -142,7 +140,6 @@ class TestGenerationTracking:
         save_state = AsyncMock()
         merge_state = AsyncMock(return_value=final_state)
         load_state = AsyncMock(side_effect=[dict(initial_state), final_state])
-        append_log = AsyncMock()
 
         monkeypatch.setattr(main, "get_resume_app", lambda: FakeResumeApp())
         monkeypatch.setattr(main, "create_generation_job", create_job)
@@ -152,7 +149,6 @@ class TestGenerationTracking:
         monkeypatch.setattr(main, "_save_session_state", save_state)
         monkeypatch.setattr(main, "_merge_session_state", merge_state)
         monkeypatch.setattr(main, "_load_session_state", load_state)
-        monkeypatch.setattr(main, "_append_session_log", append_log)
 
         chunks = [chunk async for chunk in main.generate_resume_sse_events("session-2")]
         payloads = _decode_sse_payloads(chunks)
