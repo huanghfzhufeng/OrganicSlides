@@ -50,6 +50,21 @@ class Project(Base):
     slides = relationship("Slide", back_populates="project", cascade="all, delete-orphan")
 
 
+class WorkflowSession(Base):
+    """工作流会话持久化表"""
+    __tablename__ = "workflow_sessions"
+
+    session_id = Column(String(36), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True)
+
+    status = Column(String(50), default="initialized", nullable=False, index=True)
+    current_agent = Column(String(50), default="", nullable=False)
+    state = Column(JSON, default=dict, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Slide(Base):
     """幻灯片表"""
     __tablename__ = "slides"

@@ -33,7 +33,8 @@ Examples:
 
 ## 3. Phase 1: Correctness and Runtime Stability
 
-- [ ] `REQ-004` Replace `MemorySaver` and process-local workflow state with durable persistence.
+- [x] `REQ-004` Replace `MemorySaver` and process-local workflow state with durable persistence.
+  Validation completed on `2026-03-07` with durable PostgreSQL-backed workflow state, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-005` Standardize project, revision, job, and event persistence in PostgreSQL.
 - [ ] `REQ-006` Remove Redis-as-source-of-truth session assumptions.
 - [ ] `REQ-007` Unify auth and authorization behavior across API, SSE, preview, and download flows.
