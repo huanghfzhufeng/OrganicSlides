@@ -21,7 +21,7 @@ function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [selectedStyleId, setSelectedStyleId] = useState("");
-  const [renderPathPreference, setRenderPathPreference] = useState<RenderPathPreference>('auto');
+  const [, setRenderPathPreference] = useState<RenderPathPreference>('auto');
   const [error, setError] = useState<string | null>(null);
 
   // 检查登录状态

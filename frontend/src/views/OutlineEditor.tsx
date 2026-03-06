@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Check, Loader2 } from 'lucide-react';
 import BlobButton from '../components/BlobButton';
-import { OutlineItem } from '../api/client';
+import type { OutlineItem } from '../api/client';
 
 interface OutlineEditorProps {
     initialOutline: OutlineItem[];

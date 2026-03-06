@@ -2,8 +2,8 @@
 
 import pytest
 import json
+import uuid
 from pathlib import Path
-from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
 
 
@@ -20,13 +20,38 @@ REQUIRED_FIELDS = {
 
 @pytest.mark.integration
 class TestStylesAPI:
-    """Test styles API endpoints - requires Redis and PostgreSQL"""
+    """Test styles API endpoints with mocked runtime dependencies"""
 
     @pytest.fixture(autouse=True)
-    def setup(self):
+    def setup(self, monkeypatch):
         """Setup for each test"""
-        from main import app
-        self.client = TestClient(app)
+        import main
+
+        self.main = main
+        self.app = main.app
+        self.client = TestClient(self.app)
+        self.monkeypatch = monkeypatch
+        self.session_store = {}
+
+        async def fake_set_session(session_id, data, ttl=86400):
+            self.session_store[session_id] = data
+
+        async def fake_get_session(session_id):
+            return self.session_store.get(session_id)
+
+        async def fake_update_session(session_id, updates):
+            current = self.session_store.get(session_id, {})
+            current.update(updates)
+            self.session_store[session_id] = current
+
+        monkeypatch.setattr(main.redis_client, "set_session", fake_set_session)
+        monkeypatch.setattr(main.redis_client, "get_session", fake_get_session)
+        monkeypatch.setattr(main.redis_client, "update_session", fake_update_session)
+
+        yield
+
+        self.app.dependency_overrides.clear()
+        self.client.close()
 
     def test_health_check(self):
         """Test API health check endpoint"""
@@ -53,12 +78,11 @@ class TestStylesAPI:
             "style": "organic"
         }
         response = self.client.post("/api/v1/project/create", json=payload)
-        # Accept 200 or 500 (database may not be initialized)
-        assert response.status_code in [200, 500]
-        if response.status_code == 200:
-            data = response.json()
-            assert "session_id" in data
-            assert data.get("status") == "created"
+        assert response.status_code == 200
+        data = response.json()
+        assert "session_id" in data
+        assert data["status"] == "created"
+        assert data["session_id"] in self.session_store
 
     def test_project_create_minimal_payload(self):
         """Test project creation with minimal required fields"""
@@ -66,30 +90,27 @@ class TestStylesAPI:
             "prompt": "Test presentation"
         }
         response = self.client.post("/api/v1/project/create", json=payload)
-        if response.status_code == 200:
-            assert "session_id" in response.json()
+        assert response.status_code == 200
+        data = response.json()
+        assert "session_id" in data
+        assert self.session_store[data["session_id"]]["user_intent"] == "Test presentation"
 
     def test_project_create_returns_valid_session_id(self):
         """Test that session_id is a valid UUID"""
         payload = {"prompt": "Test"}
         response = self.client.post("/api/v1/project/create", json=payload)
-        if response.status_code == 200:
-            session_id = response.json()["session_id"]
+        assert response.status_code == 200
+        session_id = response.json()["session_id"]
 
-            # Should be a valid UUID string
-            import uuid
-            try:
-                uuid.UUID(session_id)
-            except ValueError:
-                pytest.fail(f"Invalid session_id format: {session_id}")
-        else:
-            pytest.skip("Database not initialized")
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            pytest.fail(f"Invalid session_id format: {session_id}")
 
     def test_project_status_not_found(self):
         """Test project status with invalid session_id"""
         response = self.client.get("/api/v1/project/status/invalid-id")
-        # Accept 404 (not found) or 500 (database error)
-        assert response.status_code in [404, 500]
+        assert response.status_code == 404
 
     def test_project_status_existing_session(self):
         """Test project status for existing session"""
@@ -98,9 +119,7 @@ class TestStylesAPI:
             "/api/v1/project/create",
             json={"prompt": "Test"}
         )
-        if create_response.status_code != 200:
-            pytest.skip("Database not initialized")
-
+        assert create_response.status_code == 200
         session_id = create_response.json()["session_id"]
 
         # Get status
@@ -108,13 +127,13 @@ class TestStylesAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["session_id"] == session_id
-        assert "status" in data
-        assert "current_agent" in data
+        assert data["status"] == "initialized"
+        assert data["current_agent"] == ""
 
     def test_workflow_outline_not_found(self):
         """Test getting outline for non-existent session"""
         response = self.client.get("/api/v1/workflow/outline/invalid-id")
-        assert response.status_code in [404, 500]
+        assert response.status_code == 404
 
     def test_workflow_outline_existing_session(self):
         """Test getting outline for existing session"""
@@ -123,17 +142,15 @@ class TestStylesAPI:
             "/api/v1/project/create",
             json={"prompt": "Test presentation"}
         )
-        if create_response.status_code != 200:
-            pytest.skip("Database not initialized")
-
+        assert create_response.status_code == 200
         session_id = create_response.json()["session_id"]
 
         # Get outline
         response = self.client.get(f"/api/v1/workflow/outline/{session_id}")
         assert response.status_code == 200
         data = response.json()
-        assert "outline" in data
-        assert "status" in data
+        assert data["outline"] == []
+        assert data["status"] == "initialized"
 
     def test_project_create_with_custom_style(self):
         """Test creating project with different styles"""
@@ -144,8 +161,10 @@ class TestStylesAPI:
                 "/api/v1/project/create",
                 json={"prompt": "Test", "style": style}
             )
-            if response.status_code == 200:
-                assert response.json().get("status") == "created"
+            assert response.status_code == 200
+            session_id = response.json()["session_id"]
+            assert response.json()["status"] == "created"
+            assert self.session_store[session_id]["theme_config"]["style"] == style
 
 
 @pytest.mark.integration
