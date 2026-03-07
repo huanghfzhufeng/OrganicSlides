@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agents.renderer.paths import SlideRenderResult, render_slide
+from agents.renderer.preflight import validate_renderer_preflight
 from agents.renderer.tools import (
     add_bullet_points,
     add_text_to_placeholder,
@@ -128,6 +129,10 @@ async def _run_from_render_plans(
     Plans are dicts with: page_number, render_path, html_content, image_prompt.
     All slides rendered concurrently, capped at _MAX_CONCURRENT_RENDERS.
     """
+    preflight_ok, preflight_message = validate_renderer_preflight(slide_render_plans, style_config)
+    if not preflight_ok:
+        return _error_result(state, f"Renderer preflight failed: {preflight_message}")
+
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RENDERS)
     total = len(slide_render_plans)
     progress_events: list[dict] = []

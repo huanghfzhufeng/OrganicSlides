@@ -24,6 +24,7 @@ from agents import (
     visual_agent,
     renderer_agent
 )
+from agents.renderer.preflight import validate_renderer_preflight
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +120,10 @@ async def render_preparation_node(state: PresentationState) -> dict:
         )
     except ValidationError as exc:
         return _render_preparation_error(state, validation_error_message(exc))
+
+    preflight_ok, preflight_message = validate_renderer_preflight(validated_plans, style_config)
+    if not preflight_ok:
+        return _render_preparation_error(state, preflight_message)
 
     # --- 3. Determine overall render_path ---
     # Filter to only path_a and path_b for overall classification
