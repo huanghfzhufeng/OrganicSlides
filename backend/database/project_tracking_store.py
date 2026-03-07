@@ -1,11 +1,12 @@
 """Project, revision, job, and event persistence helpers."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Union
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
+from config import settings
 from database.models import (
     GenerationJob,
     JobEvent,
@@ -237,6 +238,8 @@ async def get_generation_job(job_id: Union[str, uuid.UUID]) -> Optional[dict]:
             "current_agent": job.current_agent,
             "error_message": job.error_message,
             "pptx_path": job.pptx_path or "",
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
         }
 
 
@@ -264,12 +267,51 @@ async def find_active_generation_job(session_id: str, trigger: str) -> Optional[
         }
 
 
-async def claim_next_generation_job() -> Optional[dict]:
-    """Claim the next queued job using row-level locking."""
+async def find_latest_generation_job(session_id: str, trigger: str) -> Optional[dict]:
+    """Return the most recent job for a session/trigger pair."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(GenerationJob)
-            .where(GenerationJob.status == "queued")
+            .where(
+                GenerationJob.session_id == session_id,
+                GenerationJob.trigger == trigger,
+            )
+            .order_by(GenerationJob.created_at.desc())
+            .limit(1)
+        )
+        job = result.scalars().first()
+        if job is None:
+            return None
+
+        return {
+            "job_id": str(job.id),
+            "session_id": job.session_id,
+            "project_id": str(job.project_id) if job.project_id else None,
+            "trigger": job.trigger,
+            "status": job.status,
+            "current_agent": job.current_agent,
+            "error_message": job.error_message,
+            "pptx_path": job.pptx_path or "",
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        }
+
+
+async def claim_next_generation_job() -> Optional[dict]:
+    """Claim the next queued or stale in-flight job using row-level locking."""
+    async with AsyncSessionLocal() as db:
+        stale_before = datetime.utcnow() - timedelta(seconds=settings.WORKER_JOB_STALE_SECONDS)
+        result = await db.execute(
+            select(GenerationJob)
+            .where(
+                or_(
+                    GenerationJob.status == "queued",
+                    and_(
+                        GenerationJob.status.in_(["starting", "running"]),
+                        GenerationJob.updated_at <= stale_before,
+                    ),
+                )
+            )
             .order_by(GenerationJob.created_at.asc())
             .with_for_update(skip_locked=True)
             .limit(1)
@@ -280,6 +322,7 @@ async def claim_next_generation_job() -> Optional[dict]:
 
         job.status = "starting"
         job.started_at = datetime.utcnow()
+        job.error_message = None
         await db.commit()
 
         return {

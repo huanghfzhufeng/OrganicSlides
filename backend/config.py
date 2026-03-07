@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = True
     WORKER_QUEUE_POLL_INTERVAL_SECONDS: float = 1.0
+    WORKER_JOB_STALE_SECONDS: int = 120
+    WORKER_JOB_HEARTBEAT_SECONDS: int = 15
 
     class Config:
         env_file = "../.env"  # 从项目根目录读取

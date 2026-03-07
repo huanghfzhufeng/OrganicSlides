@@ -54,6 +54,24 @@ async def _merge_session_state(session_id: str, updates: dict) -> Optional[dict]
     return persisted
 
 
+async def _job_heartbeat(
+    job_id: str,
+    status_ref: dict,
+    stop_event: asyncio.Event,
+) -> None:
+    """Keep active jobs fresh so only abandoned work is reclaimed."""
+    while not stop_event.is_set():
+        await asyncio.sleep(settings.WORKER_JOB_HEARTBEAT_SECONDS)
+        if stop_event.is_set():
+            break
+
+        status = status_ref.get("status", "running")
+        if status in {"completed", "error", "waiting_for_outline_approval"}:
+            break
+
+        await update_generation_job(job_id, status=status)
+
+
 async def consume_generation_queue(stop_event: Optional[asyncio.Event] = None) -> None:
     """Continuously claim queued jobs and execute them inside the worker process."""
     while stop_event is None or not stop_event.is_set():
@@ -107,6 +125,11 @@ async def execute_generation_job(session_id: str, job_id: str, trigger: str) -> 
         config = {"configurable": {"thread_id": session_id}}
 
     await update_generation_job(job_id, state=state, status="running")
+    heartbeat_status = {"status": "running"}
+    heartbeat_stop = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        _job_heartbeat(job_id, heartbeat_status, heartbeat_stop)
+    )
 
     try:
         async for event in workflow_app.astream(dict(state), config):
@@ -124,6 +147,7 @@ async def execute_generation_job(session_id: str, job_id: str, trigger: str) -> 
                     "status": status,
                     "message": messages[-1]["content"] if messages else "",
                 }
+                heartbeat_status["status"] = status
                 persisted_state = await _merge_session_state(session_id, node_output) or dict(state)
                 state = persisted_state
 
@@ -141,9 +165,25 @@ async def execute_generation_job(session_id: str, job_id: str, trigger: str) -> 
                 await asyncio.sleep(0.1)
 
         final_state = await _load_session_state(session_id) or {}
+        heartbeat_status["status"] = final_state.get("current_status", "completed")
         await _finalize_generation_job(session_id, job_id, trigger, final_state)
+    except asyncio.CancelledError:
+        current_state = await _load_session_state(session_id) or dict(state)
+        await record_job_event(
+            session_id,
+            "status",
+            {
+                "type": "status",
+                "agent": "worker",
+                "status": "interrupted",
+                "message": "Worker interrupted; job will be recovered from durable state",
+            },
+            job_id=job_id,
+        )
+        raise
     except Exception as exc:
         current_state = await _load_session_state(session_id) or dict(state)
+        heartbeat_status["status"] = "error"
         await update_generation_job(
             job_id,
             state=current_state,
@@ -161,6 +201,10 @@ async def execute_generation_job(session_id: str, job_id: str, trigger: str) -> 
             job_id=job_id,
         )
         await create_project_revision(session_id, "generation_failed", current_state)
+    finally:
+        heartbeat_stop.set()
+        heartbeat_task.cancel()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
 
 
 async def _finalize_generation_job(
