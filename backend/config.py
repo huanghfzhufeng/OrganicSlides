@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     OBJECT_STORAGE_REGION: str = "us-east-1"
     OBJECT_STORAGE_SECURE: bool = False
 
+    # 资产保留与清理
+    ASSET_RETENTION_HOURS: int = 168
+    ASSET_CLEANUP_INTERVAL_SECONDS: int = 300
+    ASSET_CLEANUP_BATCH_SIZE: int = 100
+
     class Config:
         env_file = "../.env"  # 从项目根目录读取
         env_file_encoding = "utf-8"

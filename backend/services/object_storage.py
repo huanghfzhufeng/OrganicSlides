@@ -85,6 +85,11 @@ class LocalObjectStorage:
             raise FileNotFoundError(f"Object not found: {key}")
         return path.read_bytes(), _guess_content_type(key)
 
+    def delete_object(self, key: str) -> None:
+        path = self.root / key
+        if path.exists():
+            path.unlink()
+
 
 class S3ObjectStorage:
     def __init__(self) -> None:
@@ -158,6 +163,12 @@ class S3ObjectStorage:
             response["Body"].read(),
             response.get("ContentType") or _guess_content_type(key),
         )
+
+    def delete_object(self, key: str) -> None:
+        try:
+            self.client.delete_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            raise FileNotFoundError(f"Object not found: {key}") from exc
 
 
 def create_object_storage():

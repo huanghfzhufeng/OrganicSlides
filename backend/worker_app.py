@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from asset_jobs import cleanup_expired_assets
 from app_lifecycle import build_lifespan
 from job_queue import enqueue_generation_job
 from worker_runtime import consume_generation_queue
@@ -25,14 +26,17 @@ async def lifespan(app: FastAPI):
     stop_event = asyncio.Event()
     async with _shared_lifespan(app):
         consumer_task = asyncio.create_task(consume_generation_queue(stop_event))
+        cleanup_task = asyncio.create_task(cleanup_expired_assets(stop_event))
         app.state.consumer_task = consumer_task
+        app.state.cleanup_task = cleanup_task
         app.state.stop_event = stop_event
         try:
             yield
         finally:
             stop_event.set()
             consumer_task.cancel()
-            await asyncio.gather(consumer_task, return_exceptions=True)
+            cleanup_task.cancel()
+            await asyncio.gather(consumer_task, cleanup_task, return_exceptions=True)
 
 
 app = FastAPI(
