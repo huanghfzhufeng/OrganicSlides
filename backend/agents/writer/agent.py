@@ -17,6 +17,7 @@ from agents.writer.prompts import (
     WRITER_USER_TEMPLATE,
 )
 from agents.writer.tools import (
+    evaluate_slide_quality,
     format_outline_for_prompt,
     format_docs_for_context,
     build_style_context,
@@ -107,7 +108,7 @@ async def run(state: dict) -> dict[str, Any]:
         llm=llm,
         raw_content=response.content,
         parser=_parse_slides_response,
-        validator=lambda slides: _validate_slide_specs_response(slides, style_config),
+        validator=lambda slides: _validate_slide_specs_response(slides, outline, style_config),
         repair_system_prompt=WRITER_REPAIR_SYSTEM_PROMPT,
         repair_user_template=WRITER_REPAIR_USER_TEMPLATE,
         repair_context={
@@ -178,11 +179,20 @@ def _build_success_message(slides_data: list, repaired: bool) -> str:
 
 def _validate_slide_specs_response(
     slides: list,
+    outline: list | None = None,
     style_config: dict | None = None,
 ) -> tuple[bool, str]:
     is_valid, message = validate_slides_content(slides, style_config)
     if not is_valid:
         return is_valid, message
+
+    quality_is_valid, quality_message = evaluate_slide_quality(
+        slides,
+        outline=outline,
+        style_config=style_config,
+    )
+    if not quality_is_valid:
+        return False, quality_message
 
     try:
         validate_slide_specs(slides)

@@ -60,7 +60,8 @@ Examples:
   Validation completed on `2026-03-07` with StylePacket-driven writer context, path-aware writer validation, `tests/unit/test_writer_style_packet.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [x] `REQ-015` Inject `StylePacket` into visual prompts and validation.
   Validation completed on `2026-03-07` with StylePacket-driven visual context, style-aware render-path and Path B prompt validation, `tests/unit/test_visual_style_packet.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-016` Add writer quality gate and repair loop.
+- [x] `REQ-016` Add writer quality gate and repair loop.
+  Validation completed on `2026-03-07` with writer quality gates for outline-title preservation, bullet density, Path B render-title limits, automatic repair via `tests/unit/test_writer_quality_gate.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-017` Add visual quality gate and repair loop.
 - [ ] `REQ-018` Add renderer preflight validation for assets, prompts, HTML, and routing.
 
