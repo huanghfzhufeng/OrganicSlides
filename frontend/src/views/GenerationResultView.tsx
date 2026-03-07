@@ -5,7 +5,7 @@ import {
     CheckCircle2, XCircle, Clock, FileImage
 } from 'lucide-react';
 import BlobButton from '../components/BlobButton';
-import { api } from '../api/client';
+import { api, type ProjectFailure } from '../api/client';
 import { dandelionIcon } from '../assets/icons';
 import Confetti from '../components/Confetti';
 import { GenerationSkeleton } from '../components/Skeleton';
@@ -123,12 +123,12 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
     const [error, setError] = useState<string | null>(null);
     const [showConfetti, setShowConfetti] = useState(false);
     const [progress, setProgress] = useState(0);
-
-    const handleRetry = () => {
-        window.location.reload();
-    };
+    const [failure, setFailure] = useState<ProjectFailure | null>(null);
+    const [attemptKey, setAttemptKey] = useState(0);
+    const [isRetrying, setIsRetrying] = useState(false);
 
     useEffect(() => {
+        setError(null);
         const eventSource = new EventSource(api.getResumeWorkflowUrl(sessionId, sessionAccessToken));
 
         eventSource.onmessage = (event) => {
@@ -180,20 +180,62 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                 ));
                 setIsDone(true);
                 setShowConfetti(true);
+                setFailure(null);
                 eventSource.close();
             } else if (data.type === 'error') {
-                setError(data.message);
+                const nextFailure: ProjectFailure = {
+                    job_id: data.job_id ?? '',
+                    session_id: sessionId,
+                    trigger: data.retry_trigger ?? 'resume_workflow',
+                    status: data.status ?? 'error',
+                    current_agent: data.failure_stage ?? data.agent ?? 'workflow',
+                    error_type: data.error_type ?? 'generation_failed',
+                    failure_stage: data.failure_stage ?? data.agent ?? 'workflow',
+                    message: data.user_message ?? data.message ?? '生成过程出错，请重试',
+                    technical_message: data.message ?? '生成过程出错，请重试',
+                    recoverable: data.recoverable ?? true,
+                    retry_available: data.retry_available ?? true,
+                    retry_trigger: data.retry_trigger ?? 'resume_workflow',
+                    details: data.details ?? {},
+                    failed_at: data.failed_at ?? null,
+                };
+                setFailure(nextFailure);
+                setError(nextFailure.message);
                 eventSource.close();
             }
         };
 
         eventSource.onerror = () => {
+            setFailure(null);
             setError("连接中断，请检查网络后重试");
             eventSource.close();
         };
 
         return () => eventSource.close();
-    }, [sessionId, sessionAccessToken]);
+    }, [sessionId, sessionAccessToken, attemptKey]);
+
+    const handleRetry = async () => {
+        try {
+            setIsRetrying(true);
+            setIsDone(false);
+            setShowConfetti(false);
+            setLogs([]);
+            setSlides([]);
+            setProgress(0);
+            setError(null);
+            await api.retryProjectGeneration(
+                sessionId,
+                failure?.retry_trigger ?? 'resume_workflow',
+                sessionAccessToken,
+            );
+            setFailure(null);
+            setAttemptKey((value) => value + 1);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsRetrying(false);
+        }
+    };
 
     const completedCount = slides.filter(s => s.status === 'complete').length;
     const failedCount = slides.filter(s => s.status === 'failed').length;
@@ -241,8 +283,19 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                         {error && (
                             <ErrorMessage
                                 message={error}
-                                type="error"
-                                onRetry={handleRetry}
+                                title={failure ? "生成任务失败" : "连接异常"}
+                                details={failure ? [
+                                    `失败阶段：${failure.failure_stage}`,
+                                    `错误类型：${failure.error_type}`,
+                                    `技术信息：${failure.technical_message}`,
+                                ] : []}
+                                type={failure ? "error" : "network"}
+                                retryLabel={isRetrying ? '重新排队中...' : failure ? '重新排队' : '重新连接'}
+                                onRetry={
+                                    failure
+                                        ? (failure.retry_available ? handleRetry : undefined)
+                                        : () => setAttemptKey((value) => value + 1)
+                                }
                             />
                         )}
                         {logs.length === 0 && !error ? (

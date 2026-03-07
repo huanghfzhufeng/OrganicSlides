@@ -2,18 +2,24 @@ import React from 'react';
 import { AlertCircle, RefreshCw, XCircle, WifiOff } from 'lucide-react';
 
 interface ErrorMessageProps {
+    title?: string;
     message: string;
+    details?: string[];
     type?: 'error' | 'warning' | 'network';
     onRetry?: () => void;
     onDismiss?: () => void;
+    retryLabel?: string;
     className?: string;
 }
 
 const ErrorMessage: React.FC<ErrorMessageProps> = ({
+    title,
     message,
+    details,
     type = 'error',
     onRetry,
     onDismiss,
+    retryLabel = '重试',
     className = '',
 }) => {
     const configs = {
@@ -55,7 +61,15 @@ const ErrorMessage: React.FC<ErrorMessageProps> = ({
                 <Icon size={24} />
             </div>
             <div className="flex-1 min-w-0">
+                {title && <p className="text-sm font-bold mb-1">{title}</p>}
                 <p className="text-sm font-medium">{message}</p>
+                {details && details.length > 0 && (
+                    <ul className="mt-2 space-y-1 text-xs opacity-90">
+                        {details.map((detail) => (
+                            <li key={detail}>{detail}</li>
+                        ))}
+                    </ul>
+                )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
                 {onRetry && (
@@ -65,7 +79,7 @@ const ErrorMessage: React.FC<ErrorMessageProps> = ({
                             flex items-center gap-1.5 transition-colors`}
                     >
                         <RefreshCw size={14} />
-                        重试
+                        {retryLabel}
                     </button>
                 )}
                 {onDismiss && (

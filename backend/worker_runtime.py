@@ -31,6 +31,62 @@ def _workflow_failed(state: Optional[dict]) -> bool:
     return status == "error" or status.endswith("_error") or status.endswith("_failed")
 
 
+def _infer_error_type(message: str, failure_stage: str) -> str:
+    lowered = message.lower()
+    if "timeout" in lowered:
+        return "timeout"
+    if "validation" in lowered or "schema" in lowered or "parse" in lowered:
+        return "validation_error"
+    if "session not found" in lowered:
+        return "session_not_found"
+    if "redis" in lowered or "postgres" in lowered or "connection" in lowered:
+        return "dependency_unavailable"
+    if failure_stage and failure_stage not in {"workflow", "worker"}:
+        return f"{failure_stage}_failed"
+    return "generation_failed"
+
+
+def _build_failure_payload(
+    message: str,
+    trigger: str,
+    state: Optional[dict] = None,
+    *,
+    recoverable: bool = True,
+    retry_available: bool = True,
+    user_message: Optional[str] = None,
+) -> dict:
+    state = state or {}
+    failure_stage = state.get("current_agent") or "workflow"
+    workflow_status = state.get("current_status") or "error"
+    if user_message is None:
+        if failure_stage and failure_stage not in {"workflow", "worker"}:
+            user_message = f"{failure_stage} 阶段失败，请修正后重试"
+        else:
+            user_message = "生成失败，请重试"
+
+    details = {
+        "agent": failure_stage,
+        "workflow_status": workflow_status,
+    }
+    if state.get("current_status"):
+        details["current_status"] = state["current_status"]
+    if state.get("last_restored_revision_number") is not None:
+        details["last_restored_revision_number"] = state["last_restored_revision_number"]
+
+    return {
+        "type": "error",
+        "status": "error",
+        "message": message,
+        "user_message": user_message,
+        "error_type": _infer_error_type(message, failure_stage),
+        "failure_stage": failure_stage,
+        "recoverable": recoverable,
+        "retry_available": retry_available,
+        "retry_trigger": trigger if retry_available else None,
+        "details": details,
+    }
+
+
 async def _load_session_state(session_id: str) -> Optional[dict]:
     return await load_workflow_state(session_id)
 
@@ -102,17 +158,16 @@ async def execute_generation_job(session_id: str, job_id: str, trigger: str) -> 
     """Run a generation workflow inside the worker service and persist events."""
     state = await _load_session_state(session_id)
     if not state:
-        await update_generation_job(job_id, status="error", error_message="Session not found")
-        await record_job_event(
-            session_id,
-            "error",
-            {
-                "type": "error",
-                "status": "error",
-                "message": "Session not found",
-            },
-            job_id=job_id,
+        error_data = _build_failure_payload(
+            "Session not found",
+            trigger,
+            {"current_agent": "worker", "current_status": "error"},
+            recoverable=False,
+            retry_available=False,
+            user_message="会话不存在，无法继续重试",
         )
+        await update_generation_job(job_id, status="error", error_message="Session not found")
+        await record_job_event(session_id, "error", error_data, job_id=job_id)
         return
 
     if trigger == "resume_workflow":
@@ -184,22 +239,14 @@ async def execute_generation_job(session_id: str, job_id: str, trigger: str) -> 
     except Exception as exc:
         current_state = await _load_session_state(session_id) or dict(state)
         heartbeat_status["status"] = "error"
+        error_data = _build_failure_payload(str(exc), trigger, current_state)
         await update_generation_job(
             job_id,
             state=current_state,
             status="error",
             error_message=str(exc),
         )
-        await record_job_event(
-            session_id,
-            "error",
-            {
-                "type": "error",
-                "status": "error",
-                "message": str(exc),
-            },
-            job_id=job_id,
-        )
+        await record_job_event(session_id, "error", error_data, job_id=job_id)
         await create_project_revision(session_id, "generation_failed", current_state)
     finally:
         heartbeat_stop.set()
@@ -215,11 +262,7 @@ async def _finalize_generation_job(
 ) -> None:
     if _workflow_failed(final_state):
         error_message = final_state.get("error", "Workflow failed")
-        error_data = {
-            "type": "error",
-            "status": "error",
-            "message": error_message,
-        }
+        error_data = _build_failure_payload(error_message, trigger, final_state)
         await update_generation_job(
             job_id,
             state=final_state,
