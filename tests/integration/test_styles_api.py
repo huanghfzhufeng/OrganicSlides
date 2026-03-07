@@ -26,6 +26,7 @@ class TestStylesAPI:
     def setup(self, monkeypatch):
         """Setup for each test"""
         import main
+        from project_preview import build_project_preview
 
         self.main = main
         self.app = main.app
@@ -68,6 +69,7 @@ class TestStylesAPI:
                 "outline_count": len(state.get("outline", [])),
                 "created_at": f"2026-03-07T00:00:{revision_number:02d}Z",
                 "restored_from_revision_number": state.get("last_restored_revision_number"),
+                "preview": build_project_preview(state),
             }
             self.revisions.append(revision)
             return revision
@@ -88,6 +90,7 @@ class TestStylesAPI:
                     "outline_count": revision["outline_count"],
                     "created_at": revision["created_at"],
                     "restored_from_revision_number": revision["restored_from_revision_number"],
+                    "preview": revision["preview"],
                 }
                 for revision in revisions[:limit]
             ]
@@ -257,6 +260,57 @@ class TestStylesAPI:
         assert data["status"] == "initialized"
         assert data["current_agent"] == ""
 
+    def test_project_preview_returns_persisted_slide_preview(self):
+        """Preview endpoint should hydrate persisted slide preview cards"""
+        project = self._create_project(prompt="Preview test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+        self.session_store[session_id].update(
+            {
+                "current_status": "render_complete",
+                "pptx_path": "http://localhost:8000/api/v1/assets/sessions/test/presentation.pptx",
+                "slide_render_plans": [
+                    {"page_number": 1, "title": "封面结论", "render_path": "path_b"},
+                    {"page_number": 2, "title": "第二页观点", "render_path": "path_a"},
+                ],
+                "slide_files": [
+                    {
+                        "page_number": 1,
+                        "title": "封面结论",
+                        "render_path": "path_b",
+                        "type": "image",
+                        "path": "http://localhost:8000/api/v1/assets/sessions/test/slides/slide_001.png",
+                        "thumbnail_url": "http://localhost:8000/api/v1/assets/sessions/test/thumbnails/thumb_001.jpg",
+                    },
+                    {
+                        "page_number": 2,
+                        "title": "第二页观点",
+                        "render_path": "path_a",
+                        "type": "html",
+                        "path": "http://localhost:8000/api/v1/assets/sessions/test/slides/slide_002.pptx",
+                    },
+                ],
+                "render_progress": [
+                    {"slide_number": 1, "render_path": "path_b", "status": "complete"},
+                    {"slide_number": 2, "render_path": "path_a", "status": "complete"},
+                ],
+            }
+        )
+
+        response = self.client.get(
+            f"/api/v1/project/preview/{session_id}",
+            params={"access_token": access_token},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "render_complete"
+        assert payload["preview"]["slides_count"] == 2
+        assert payload["preview"]["slides"][0]["title"] == "封面结论"
+        assert payload["preview"]["slides"][0]["preview_url"].endswith("thumb_001.jpg")
+        assert payload["preview"]["slides"][1]["title"] == "第二页观点"
+        assert payload["preview"]["slides"][1]["preview_url"] == ""
+
     def test_workflow_outline_not_found(self):
         """Outline endpoint requires access token when no user session exists"""
         response = self.client.get("/api/v1/workflow/outline/invalid-id")
@@ -358,6 +412,7 @@ class TestStylesAPI:
             "project_created",
         ]
         assert payload["revisions"][0]["revision_number"] == 3
+        assert "preview" in payload["revisions"][0]
 
     def test_restore_project_revision_replaces_session_state_and_records_restoration(self):
         """Restoring a revision should replace current state and append a restoration revision"""

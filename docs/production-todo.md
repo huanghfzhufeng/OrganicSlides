@@ -88,7 +88,8 @@ Examples:
   Validation completed on `2026-03-07` with project revision history and restore APIs, active-job restore guards, frontend revision client methods, `tests/integration/test_styles_api.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [x] `REQ-026` Add transparent user-facing failure reasons and retry actions.
   Validation completed on `2026-03-07` with structured worker failure payloads, failure summary and retry APIs, in-app retry actions for research/generation flows, `tests/integration/test_styles_api.py`, `tests/unit/test_generation_tracking.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-027` Improve preview quality and history consistency.
+- [x] `REQ-027` Improve preview quality and history consistency.
+  Validation completed on `2026-03-07` with persisted project preview assembly, preview hydration API, revision preview summaries, corrected render-progress event fields, `tests/integration/test_styles_api.py`, `tests/unit/test_asset_cleanup.py`, `tests/unit/test_project_preview.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-028` Add operator/admin tooling for failed jobs and support actions.
 
 ## 7. Phase 5: Security, Cost Control, and Operations

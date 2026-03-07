@@ -103,11 +103,19 @@ class TestRendererAssetMetadata:
             "session-1",
             3,
             "run-1",
+            [
+                {"title": "Illustrated opener"},
+                {"title": "Editorial detail"},
+                {"title": "Broken slide"},
+            ],
         )
 
         assert len(slide_files) == 2
+        assert slide_files[0]["title"] == "Illustrated opener"
         assert slide_files[0]["storage_key"].endswith("slide_001.png")
         assert slide_files[0]["thumbnail_storage_key"].endswith("thumb_001.jpg")
         assert slide_files[1]["type"] == "html"
         assert [event["status"] for event in progress_events] == ["complete", "complete", "failed"]
+        assert progress_events[0]["slide_title"] == "Illustrated opener"
+        assert progress_events[0]["slide_index"] == 0
         assert record_asset.await_count == 3

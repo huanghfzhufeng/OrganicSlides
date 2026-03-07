@@ -15,6 +15,7 @@ from database.models import (
     WorkflowSession,
 )
 from database.postgres import AsyncSessionLocal
+from project_preview import build_project_preview
 
 
 Identifier = Optional[Union[str, uuid.UUID]]
@@ -134,6 +135,7 @@ def _serialize_revision(revision: ProjectRevision, include_snapshot: bool = Fals
         "outline_count": len(revision.outline or []),
         "created_at": revision.created_at.isoformat() if revision.created_at else None,
         "restored_from_revision_number": snapshot.get("last_restored_revision_number"),
+        "preview": build_project_preview(snapshot),
     }
     if include_snapshot:
         payload["state_snapshot"] = snapshot

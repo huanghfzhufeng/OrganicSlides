@@ -172,6 +172,7 @@ async def _run_from_render_plans(
             session_id,
             total,
             asset_run_id,
+            slide_render_plans,
         )
     except Exception as exc:
         return _error_result(state, f"Object storage failed: {exc}")
@@ -227,6 +228,7 @@ async def _run_dual_path(
             session_id,
             total,
             asset_run_id,
+            slides_data,
         )
     except Exception as exc:
         return _error_result(state, f"Object storage failed: {exc}")
@@ -365,6 +367,7 @@ def _make_render_progress_event(
     total_slides: int,
     render_path: str,
     status: str,
+    slide_title: str,
     thumbnail_url: Optional[str] = None,
     error: Optional[str] = None,
 ) -> dict:
@@ -377,6 +380,8 @@ def _make_render_progress_event(
     event: dict = {
         "type": "render_progress",
         "slide_number": slide_number,
+        "slide_index": slide_number - 1,
+        "slide_title": slide_title,
         "total_slides": total_slides,
         "render_path": render_path,
         "status": status,  # "complete" | "failed"
@@ -490,12 +495,19 @@ async def _persist_slide_outputs(
     session_id: str,
     total_slides: int,
     asset_run_id: str,
+    slide_contexts: list[dict],
 ) -> tuple[list[dict], list[dict]]:
     slide_files: list[dict] = []
     progress_events: list[dict] = []
 
     for result in sorted(results, key=lambda item: item.slide_index):
         thumbnail_url: Optional[str] = None
+        slide_context = (
+            slide_contexts[result.slide_index]
+            if 0 <= result.slide_index < len(slide_contexts)
+            else {}
+        )
+        slide_title = slide_context.get("title", f"Slide {result.slide_index + 1}")
 
         if result.success and result.output_path:
             artifact_filename = f"slide_{result.slide_index + 1:03d}{Path(result.output_path).suffix}"
@@ -515,6 +527,8 @@ async def _persist_slide_outputs(
             )
             slide_file = {
                 "page_number": result.slide_index + 1,
+                "title": slide_title,
+                "render_path": result.render_path,
                 "path": stored_artifact.url,
                 "storage_key": stored_artifact.key,
                 "type": _slide_artifact_kind(result),
@@ -558,6 +572,7 @@ async def _persist_slide_outputs(
                 total_slides=total_slides,
                 render_path=result.render_path,
                 status="complete" if result.success else "failed",
+                slide_title=slide_title,
                 thumbnail_url=thumbnail_url,
                 error=result.error,
             )
