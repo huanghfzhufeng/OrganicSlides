@@ -84,7 +84,8 @@ Examples:
 
 ## 6. Phase 4: Product and User Experience
 
-- [ ] `REQ-025` Add project revision history and restore capability.
+- [x] `REQ-025` Add project revision history and restore capability.
+  Validation completed on `2026-03-07` with project revision history and restore APIs, active-job restore guards, frontend revision client methods, `tests/integration/test_styles_api.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-026` Add transparent user-facing failure reasons and retry actions.
 - [ ] `REQ-027` Improve preview quality and history consistency.
 - [ ] `REQ-028` Add operator/admin tooling for failed jobs and support actions.

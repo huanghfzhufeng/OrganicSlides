@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app_lifecycle import build_lifespan
@@ -19,7 +19,11 @@ from state import create_initial_state
 from database.postgres import get_db
 from database.models import User, Project
 from database.project_tracking_store import (
+    count_project_revisions,
     create_project_revision,
+    find_session_active_generation_job,
+    list_project_revisions,
+    restore_project_revision as restore_project_revision_snapshot,
     sync_project_state,
 )
 from database.workflow_state_store import (
@@ -130,6 +134,28 @@ class StyleUpdate(BaseModel):
     style_id: str
     render_path_preference: str = "auto"  # "auto" | "path_a" | "path_b"
     access_token: Optional[str] = None
+
+
+class RevisionRestoreRequest(BaseModel):
+    session_id: str
+    revision_number: Optional[int] = None
+    revision_id: Optional[str] = None
+    access_token: Optional[str] = None
+
+    @field_validator("revision_number")
+    @classmethod
+    def revision_number_must_be_positive(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value < 1:
+            raise ValueError("revision_number must be greater than 0")
+        return value
+
+    @model_validator(mode="after")
+    def require_exactly_one_revision_selector(self) -> "RevisionRestoreRequest":
+        has_revision_number = self.revision_number is not None
+        has_revision_id = bool(self.revision_id)
+        if has_revision_number == has_revision_id:
+            raise ValueError("Provide exactly one of revision_number or revision_id")
+        return self
 
 
 async def _authorize_project_access(
@@ -591,6 +617,73 @@ async def get_project_status(
         "slides_count": len(state.get("slides_data", [])),
         "pptx_path": state.get("pptx_path", ""),
         "error": state.get("error")
+    }
+
+
+@app.get("/api/v1/project/revisions/{session_id}")
+async def get_project_revisions(
+    session_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    access_token: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List persisted revision history for a project session."""
+    await _authorize_project_access(session_id, access_token, current_user, db)
+    state = await _load_session_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    revisions = await list_project_revisions(session_id, limit=limit)
+    return {
+        "session_id": session_id,
+        "revisions": revisions,
+        "total": await count_project_revisions(session_id),
+    }
+
+
+@app.post("/api/v1/project/revisions/restore")
+async def restore_project_revision(
+    data: RevisionRestoreRequest,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore the current session state from a historical revision snapshot."""
+    await _authorize_project_access(data.session_id, data.access_token, current_user, db)
+    state = await _load_session_state(data.session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    active_job = await find_session_active_generation_job(data.session_id)
+    if active_job is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot restore revisions while a generation job is active",
+        )
+
+    restored = await restore_project_revision_snapshot(
+        data.session_id,
+        revision_number=data.revision_number,
+        revision_id=data.revision_id,
+    )
+    if restored is None:
+        raise HTTPException(status_code=404, detail="Revision not found")
+
+    restored_state = restored["state"]
+    style_packet = restored_state.get("style_packet", {}) or {}
+    return {
+        "status": "revision_restored",
+        "session_id": data.session_id,
+        "restored_revision": restored["restored_revision"],
+        "restoration_revision": restored["restoration_revision"],
+        "current_state": {
+            "status": restored_state.get("current_status", "unknown"),
+            "current_agent": restored_state.get("current_agent", ""),
+            "outline": restored_state.get("outline", []),
+            "style_id": restored_state.get("style_id") or style_packet.get("style_id", ""),
+            "pptx_path": restored_state.get("pptx_path", ""),
+            "last_restored_revision_number": restored_state.get("last_restored_revision_number"),
+        },
     }
 
 

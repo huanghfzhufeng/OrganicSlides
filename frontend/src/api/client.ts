@@ -70,6 +70,45 @@ export interface ProjectListItem {
     created_at: string;
 }
 
+export interface ProjectRevision {
+    revision_id: string;
+    project_id?: string | null;
+    session_id: string;
+    revision_number: number;
+    revision_type: string;
+    status: string;
+    theme?: string | null;
+    outline: OutlineItem[];
+    outline_count: number;
+    created_at: string;
+    restored_from_revision_number?: number | null;
+}
+
+export interface ProjectRevisionListResponse {
+    session_id: string;
+    revisions: ProjectRevision[];
+    total: number;
+}
+
+export interface ProjectRevisionRestoreResponse {
+    status: string;
+    session_id: string;
+    restored_revision: ProjectRevision;
+    restoration_revision: {
+        revision_id: string;
+        revision_number: number;
+        revision_type: string;
+    };
+    current_state: {
+        status: string;
+        current_agent: string;
+        outline: OutlineItem[];
+        style_id: string;
+        pptx_path: string;
+        last_restored_revision_number?: number | null;
+    };
+}
+
 // ==================== Token 管理 ====================
 
 const TOKEN_KEY = 'masppt_token';
@@ -159,6 +198,42 @@ export const api = {
             headers: tokenManager.getHeaders(),
         });
         if (!response.ok) throw new Error('Failed to fetch projects');
+        return response.json();
+    },
+
+    listProjectRevisions: async (
+        sessionId: string,
+        sessionAccessToken?: string,
+        limit = 20,
+    ): Promise<ProjectRevisionListResponse> => {
+        const response = await fetch(
+            withProjectAccessToken(
+                `${API_BASE_URL}/project/revisions/${sessionId}?limit=${limit}`,
+                sessionAccessToken,
+            ),
+        );
+        if (!response.ok) throw new Error('Failed to fetch project revisions');
+        return response.json();
+    },
+
+    restoreProjectRevision: async (
+        sessionId: string,
+        revisionNumber: number,
+        sessionAccessToken?: string,
+    ): Promise<ProjectRevisionRestoreResponse> => {
+        const response = await fetch(`${API_BASE_URL}/project/revisions/restore`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...tokenManager.getHeaders(),
+            },
+            body: JSON.stringify({
+                session_id: sessionId,
+                revision_number: revisionNumber,
+                access_token: sessionAccessToken ?? null,
+            }),
+        });
+        if (!response.ok) throw new Error('Failed to restore project revision');
         return response.json();
     },
 

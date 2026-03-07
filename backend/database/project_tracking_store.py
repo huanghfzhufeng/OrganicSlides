@@ -120,6 +120,113 @@ async def create_project_revision(
         }
 
 
+def _serialize_revision(revision: ProjectRevision, include_snapshot: bool = False) -> dict:
+    snapshot = dict(revision.state_snapshot or {})
+    payload = {
+        "revision_id": str(revision.id),
+        "project_id": str(revision.project_id) if revision.project_id else None,
+        "session_id": revision.session_id,
+        "revision_number": revision.revision_number,
+        "revision_type": revision.revision_type,
+        "status": revision.status,
+        "theme": revision.theme,
+        "outline": list(revision.outline or []),
+        "outline_count": len(revision.outline or []),
+        "created_at": revision.created_at.isoformat() if revision.created_at else None,
+        "restored_from_revision_number": snapshot.get("last_restored_revision_number"),
+    }
+    if include_snapshot:
+        payload["state_snapshot"] = snapshot
+    return payload
+
+
+async def list_project_revisions(session_id: str, limit: int = 20) -> list[dict]:
+    """List project revisions for a workflow session in reverse chronological order."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ProjectRevision)
+            .where(ProjectRevision.session_id == session_id)
+            .order_by(ProjectRevision.revision_number.desc())
+            .limit(limit)
+        )
+        revisions = result.scalars().all()
+        return [_serialize_revision(revision) for revision in revisions]
+
+
+async def count_project_revisions(session_id: str) -> int:
+    """Count all persisted revisions for a workflow session."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(func.count(ProjectRevision.id)).where(ProjectRevision.session_id == session_id)
+        )
+        return int(result.scalar() or 0)
+
+
+async def get_project_revision(
+    session_id: str,
+    revision_number: Optional[int] = None,
+    revision_id: Identifier = None,
+) -> Optional[dict]:
+    """Fetch a single revision by revision number or revision id."""
+    async with AsyncSessionLocal() as db:
+        filters = [ProjectRevision.session_id == session_id]
+        if revision_id is not None:
+            filters.append(ProjectRevision.id == _as_uuid(revision_id))
+        elif revision_number is not None:
+            filters.append(ProjectRevision.revision_number == revision_number)
+        else:
+            raise ValueError("revision_number or revision_id is required")
+
+        result = await db.execute(select(ProjectRevision).where(*filters))
+        revision = result.scalar_one_or_none()
+        if revision is None:
+            return None
+        return _serialize_revision(revision, include_snapshot=True)
+
+
+async def restore_project_revision(
+    session_id: str,
+    revision_number: Optional[int] = None,
+    revision_id: Identifier = None,
+) -> Optional[dict]:
+    """Restore the latest workflow state from a historical revision snapshot."""
+    revision = await get_project_revision(
+        session_id,
+        revision_number=revision_number,
+        revision_id=revision_id,
+    )
+    if revision is None:
+        return None
+
+    from database.workflow_state_store import save_workflow_state
+
+    restored_state = dict(revision["state_snapshot"])
+    restored_state["session_id"] = session_id
+    restored_state["current_status"] = restored_state.get("current_status", revision["status"])
+    restored_state["last_restored_revision_id"] = revision["revision_id"]
+    restored_state["last_restored_revision_number"] = revision["revision_number"]
+    restored_state.pop("error", None)
+
+    persisted_state = await save_workflow_state(
+        session_id,
+        restored_state,
+        project_id=revision["project_id"],
+    )
+    await sync_project_state(session_id, persisted_state)
+    restoration_revision = await create_project_revision(
+        session_id,
+        "revision_restored",
+        persisted_state,
+        project_id=revision["project_id"],
+    )
+
+    return {
+        "restored_revision": revision,
+        "restoration_revision": restoration_revision,
+        "state": persisted_state,
+    }
+
+
 async def create_generation_job(
     session_id: str,
     trigger: str,
@@ -275,6 +382,36 @@ async def find_latest_generation_job(session_id: str, trigger: str) -> Optional[
             .where(
                 GenerationJob.session_id == session_id,
                 GenerationJob.trigger == trigger,
+            )
+            .order_by(GenerationJob.created_at.desc())
+            .limit(1)
+        )
+        job = result.scalars().first()
+        if job is None:
+            return None
+
+        return {
+            "job_id": str(job.id),
+            "session_id": job.session_id,
+            "project_id": str(job.project_id) if job.project_id else None,
+            "trigger": job.trigger,
+            "status": job.status,
+            "current_agent": job.current_agent,
+            "error_message": job.error_message,
+            "pptx_path": job.pptx_path or "",
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        }
+
+
+async def find_session_active_generation_job(session_id: str) -> Optional[dict]:
+    """Return the most recent in-flight job for a workflow session."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(GenerationJob)
+            .where(
+                GenerationJob.session_id == session_id,
+                GenerationJob.status.notin_(["completed", "error"]),
             )
             .order_by(GenerationJob.created_at.desc())
             .limit(1)
