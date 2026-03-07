@@ -38,6 +38,7 @@ from database.workflow_state_store import (
 )
 from auth import auth_router, get_current_user, get_current_active_user
 from auth.service import AuthService
+from runtime_schemas import build_style_packet, serialize_models
 from styles.registry import get_registry
 from styles.recommender import StyleRecommender
 
@@ -657,40 +658,37 @@ async def update_project_style(
         "render_path_preference": render_pref,
         "render_paths": [render_pref] if render_pref in ("path_a", "path_b") else style_config.get("render_paths", ["path_a"]),
     }
+    effective_theme_config = {
+        "style_id": data.style_id,
+        "style": style_config.get("id", data.style_id),
+        "name_zh": style_config.get("name_zh", ""),
+        "name_en": style_config.get("name_en", ""),
+        "tier": style_config.get("tier", 1),
+        "colors": style_config.get("colors", {}),
+        "typography": style_config.get("typography", {}),
+        "render_paths": effective_style_config["render_paths"],
+        "base_style_prompt": style_config.get("base_style_prompt", ""),
+        "sample_image_path": style_config.get("sample_image_path", ""),
+        "render_path_preference": render_pref,
+    }
+    style_packet = build_style_packet(
+        style_id=data.style_id,
+        style_config=effective_style_config,
+        theme_config=effective_theme_config,
+    )
+    serialized_style_packet = serialize_models(style_packet)
 
     updated_state = await _merge_session_state(data.session_id, {
         "style_id": data.style_id,
         "style_config": effective_style_config,
-        "theme_config": {
-            "style_id": data.style_id,
-            "style": style_config.get("id", data.style_id),
-            "name_zh": style_config.get("name_zh", ""),
-            "name_en": style_config.get("name_en", ""),
-            "tier": style_config.get("tier", 1),
-            "colors": style_config.get("colors", {}),
-            "typography": style_config.get("typography", {}),
-            "render_paths": effective_style_config["render_paths"],
-            "base_style_prompt": style_config.get("base_style_prompt", ""),
-            "sample_image_path": style_config.get("sample_image_path", ""),
-            "render_path_preference": render_pref,
-        }
+        "style_packet": serialized_style_packet,
+        "theme_config": effective_theme_config,
     }) or {
         **state,
         "style_id": data.style_id,
         "style_config": effective_style_config,
-        "theme_config": {
-            "style_id": data.style_id,
-            "style": style_config.get("id", data.style_id),
-            "name_zh": style_config.get("name_zh", ""),
-            "name_en": style_config.get("name_en", ""),
-            "tier": style_config.get("tier", 1),
-            "colors": style_config.get("colors", {}),
-            "typography": style_config.get("typography", {}),
-            "render_paths": effective_style_config["render_paths"],
-            "base_style_prompt": style_config.get("base_style_prompt", ""),
-            "sample_image_path": style_config.get("sample_image_path", ""),
-            "render_path_preference": render_pref,
-        },
+        "style_packet": serialized_style_packet,
+        "theme_config": effective_theme_config,
     }
     await create_project_revision(data.session_id, "style_updated", updated_state)
 

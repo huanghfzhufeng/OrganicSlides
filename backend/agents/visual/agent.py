@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage
+from pydantic import ValidationError
 
 from agents.visual.prompts import (
     VISUAL_REPAIR_SYSTEM_PROMPT,
@@ -20,6 +21,13 @@ from agents.visual.tools import (
 from agents.base import get_llm, create_system_message
 from agents.structured_output import extract_json_payload, resolve_structured_output
 from rendering_policy import enforce_render_path_preference
+from runtime_schemas import (
+    build_style_packet,
+    serialize_models,
+    validate_render_plans,
+    validate_slide_specs,
+    validation_error_message,
+)
 
 
 async def run(state: dict) -> dict[str, Any]:
@@ -29,8 +37,31 @@ async def run(state: dict) -> dict[str, Any]:
     """
     llm = get_llm(model="gpt-4o", temperature=0.5)
 
-    slides_data = state.get("slides_data", [])
-    style_config = state.get("style_config") or state.get("theme_config", {})
+    try:
+        slide_specs = validate_slide_specs(state.get("slides_data", []))
+        slides_data = serialize_models(slide_specs)
+        style_packet = build_style_packet(
+            style_id=state.get("style_id", ""),
+            style_config=state.get("style_packet", state.get("style_config", {})),
+            theme_config=state.get("theme_config", {}),
+        )
+        style_config = serialize_models(style_packet)
+    except ValidationError as exc:
+        message = validation_error_message(exc)
+        return {
+            "slide_render_plans": [],
+            "render_path": "path_a",
+            "current_status": "visual_error",
+            "current_agent": "visual",
+            "error": f"运行时 schema 校验失败: {message}",
+            "messages": state.get("messages", []) + [
+                {
+                    "role": "assistant",
+                    "content": f"视觉总监输入校验失败：{message}",
+                    "agent": "visual",
+                }
+            ],
+        }
 
     if not slides_data:
         return {
@@ -94,6 +125,8 @@ async def run(state: dict) -> dict[str, Any]:
         }
 
     slide_render_plans = result.value
+    render_plans = validate_render_plans(slide_render_plans, style_packet)
+    slide_render_plans = serialize_models(render_plans)
 
     # Determine overall render_path
     paths_used = {p.get("render_path") for p in slide_render_plans}
@@ -106,6 +139,9 @@ async def run(state: dict) -> dict[str, Any]:
 
     return {
         "slide_render_plans": slide_render_plans,
+        "slides_data": slides_data,
+        "style_packet": style_config,
+        "style_config": style_config,
         "render_path": overall_path,
         "current_status": "visual_designed",
         "current_agent": "visual",
@@ -180,6 +216,11 @@ def _validate_visual_plans(plans: list, slides_data: list, style_config: dict) -
 
         if not plan.get("title"):
             return False, f"plan {index + 1} missing title"
+
+    try:
+        validate_render_plans(plans, style_config)
+    except ValidationError as exc:
+        return False, validation_error_message(exc)
 
     return True, "验证通过"
 

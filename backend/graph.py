@@ -8,9 +8,15 @@ LangGraph 工作流编排
 
 from typing import Literal
 from langgraph.graph import StateGraph, END
+from pydantic import ValidationError
 
 from state import PresentationState
-from rendering_policy import effective_render_paths, enforce_render_path_preference
+from runtime_schemas import (
+    build_style_packet,
+    serialize_models,
+    validate_render_plans,
+    validation_error_message,
+)
 from agents import (
     researcher_agent,
     planner_agent,
@@ -85,13 +91,19 @@ async def render_preparation_node(state: PresentationState) -> dict:
     5. 如果 style_config 缺失，尝试从 theme_config 回退
     """
     slide_render_plans = state.get("slide_render_plans", [])
-    style_config = state.get("style_config", {})
+    style_config = state.get("style_packet", state.get("style_config", {}))
     theme_config = state.get("theme_config", {})
     slides_data = state.get("slides_data", [])
 
-    if not style_config and theme_config:
-        # Build minimal style_config from legacy theme_config for backward compat
-        style_config = _build_style_config_from_theme(theme_config)
+    try:
+        style_packet = build_style_packet(
+            style_id=state.get("style_id", ""),
+            style_config=style_config,
+            theme_config=theme_config,
+        )
+    except ValidationError as exc:
+        return _render_preparation_error(state, validation_error_message(exc))
+    style_config = serialize_models(style_packet)
 
     # --- 1. Validate slide_render_plans ---
     if not slide_render_plans and slides_data:
@@ -101,13 +113,12 @@ async def render_preparation_node(state: PresentationState) -> dict:
         return _render_preparation_error(state, "缺少可渲染的 slide_render_plans")
 
     # --- 2. Validate each plan has required fields ---
-    validated_plans = []
     try:
-        for plan in slide_render_plans:
-            validated = _validate_render_plan(plan, style_config)
-            validated_plans.append(validated)
-    except ValueError as exc:
-        return _render_preparation_error(state, str(exc))
+        validated_plans = serialize_models(
+            validate_render_plans(slide_render_plans, style_packet)
+        )
+    except ValidationError as exc:
+        return _render_preparation_error(state, validation_error_message(exc))
 
     # --- 3. Determine overall render_path ---
     # Filter to only path_a and path_b for overall classification
@@ -138,6 +149,7 @@ async def render_preparation_node(state: PresentationState) -> dict:
         "slide_render_plans": validated_plans,
         "render_path": overall_path,
         "style_config": style_config,
+        "style_packet": style_config,
         "render_progress": render_progress,
         "current_status": "render_prepared",
         "current_agent": "render_prep",
@@ -168,46 +180,6 @@ async def error_node(state: PresentationState) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Helper functions for render_preparation_node
-# ---------------------------------------------------------------------------
-
-def _validate_render_plan(plan: dict, style_config: dict) -> dict:
-    """
-    Validate and fill in missing fields in a render plan.
-    Returns a new dict (immutable pattern).
-    """
-    page_number = plan.get("page_number")
-    if not page_number:
-        raise ValueError("render_preparation: render plan missing page_number")
-
-    render_path = enforce_render_path_preference(plan.get("render_path", "path_a"), style_config)
-    html_content = plan.get("html_content")
-    image_prompt = plan.get("image_prompt")
-    if render_path == "path_a" and not html_content:
-        raise ValueError(f"render_preparation: slide {page_number} missing html_content for path_a")
-    if render_path == "path_b" and not image_prompt:
-        raise ValueError(f"render_preparation: slide {page_number} missing image_prompt for path_b")
-
-    colors = style_config.get("colors", {}) if style_config else {}
-
-    return {
-        "page_number": page_number,
-        "render_path": render_path,
-        "layout_name": plan.get("layout_name", "bullet_list"),
-        "title": plan.get("title", ""),
-        "content": plan.get("content", {}),
-        "html_content": html_content if render_path == "path_a" else None,
-        "image_prompt": image_prompt if render_path == "path_b" else None,
-        "style_notes": plan.get("style_notes", ""),
-        "color_system": plan.get("color_system") or {
-            "background": colors.get("background", "#FFFFFF"),
-            "text": colors.get("text", "#1A1A1A"),
-            "accent": colors.get("accent", "#0984E3"),
-        },
-    }
-
-
 def _render_preparation_error(state: PresentationState, message: str) -> dict:
     return {
         "current_status": "render_preparation_error",
@@ -221,26 +193,6 @@ def _render_preparation_error(state: PresentationState, message: str) -> dict:
             }
         ],
     }
-
-
-def _build_style_config_from_theme(theme_config: dict) -> dict:
-    """
-    Build a minimal style_config from legacy theme_config for backward compatibility.
-    """
-    colors = theme_config.get("colors", {})
-    return {
-        "id": theme_config.get("style", "organic"),
-        "name_zh": theme_config.get("name_zh", ""),
-        "name_en": theme_config.get("name_en", theme_config.get("style", "Organic")),
-        "tier": 1,
-        "render_paths": effective_render_paths(theme_config),
-        "colors": colors,
-        "typography": theme_config.get("typography", {}),
-        "base_style_prompt": None,
-        "sample_image_path": "",
-        "render_path_preference": theme_config.get("render_path_preference", "auto"),
-    }
-
 
 # ---------------------------------------------------------------------------
 # Workflow definitions

@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage
+from pydantic import ValidationError
 
 from agents.writer.prompts import (
     WRITER_REPAIR_SYSTEM_PROMPT,
@@ -23,6 +24,13 @@ from agents.writer.tools import (
 )
 from agents.base import get_llm, create_system_message
 from agents.structured_output import extract_json_payload, resolve_structured_output
+from runtime_schemas import (
+    build_research_packet,
+    build_style_packet,
+    serialize_models,
+    validate_slide_specs,
+    validation_error_message,
+)
 
 
 async def run(state: dict) -> dict[str, Any]:
@@ -34,9 +42,36 @@ async def run(state: dict) -> dict[str, Any]:
 
     outline = state.get("outline", [])
     user_intent = state.get("user_intent", "")
-    source_docs = state.get("source_docs", [])
-    style_id = state.get("style_id", "")
-    style_config = state.get("style_config", {})
+    try:
+        research_packet = build_research_packet(
+            user_intent,
+            state.get("research_packet", {}).get("source_docs", state.get("source_docs", [])),
+            state.get("research_packet", {}).get("search_results", state.get("search_results", [])),
+        )
+        style_packet = build_style_packet(
+            style_id=state.get("style_id", ""),
+            style_config=state.get("style_packet", state.get("style_config", {})),
+            theme_config=state.get("theme_config", {}),
+        )
+    except ValidationError as exc:
+        message = validation_error_message(exc)
+        return {
+            "slides_data": [],
+            "current_status": "writer_error",
+            "current_agent": "writer",
+            "error": f"运行时 schema 校验失败: {message}",
+            "messages": state.get("messages", []) + [
+                {
+                    "role": "assistant",
+                    "content": f"撰稿人输入校验失败：{message}",
+                    "agent": "writer",
+                }
+            ],
+        }
+
+    source_docs = serialize_models(research_packet.source_docs)
+    style_id = style_packet.style_id
+    style_config = serialize_models(style_packet)
 
     if not outline:
         return {
@@ -72,7 +107,7 @@ async def run(state: dict) -> dict[str, Any]:
         llm=llm,
         raw_content=response.content,
         parser=_parse_slides_response,
-        validator=validate_slides_content,
+        validator=_validate_slide_specs_response,
         repair_system_prompt=WRITER_REPAIR_SYSTEM_PROMPT,
         repair_user_template=WRITER_REPAIR_USER_TEMPLATE,
         repair_context={
@@ -100,10 +135,16 @@ async def run(state: dict) -> dict[str, Any]:
             ],
         }
 
-    slides_data = result.value
+    slide_specs = validate_slide_specs(result.value)
+    slides_data = serialize_models(slide_specs)
 
     return {
         "slides_data": slides_data,
+        "research_packet": serialize_models(research_packet),
+        "style_packet": style_config,
+        "source_docs": source_docs,
+        "style_id": style_id,
+        "style_config": style_config,
         "current_status": "content_written",
         "current_agent": "writer",
         "writer_diagnostics": {
@@ -132,3 +173,15 @@ def _parse_slides_response(content: str) -> list:
 def _build_success_message(slides_data: list, repaired: bool) -> str:
     action = "修复并完成" if repaired else "已完成"
     return f"撰稿人{action} {len(slides_data)} 页内容撰写"
+
+
+def _validate_slide_specs_response(slides: list) -> tuple[bool, str]:
+    is_valid, message = validate_slides_content(slides)
+    if not is_valid:
+        return is_valid, message
+
+    try:
+        validate_slide_specs(slides)
+    except ValidationError as exc:
+        return False, validation_error_message(exc)
+    return True, "验证通过"

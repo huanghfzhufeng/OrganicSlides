@@ -9,6 +9,7 @@ import uuid
 from typing import Any
 
 from langchain_core.messages import HumanMessage
+from pydantic import ValidationError
 
 from agents.planner.prompts import (
     PLANNER_REPAIR_SYSTEM_PROMPT,
@@ -19,6 +20,7 @@ from agents.planner.prompts import (
 from agents.planner.tools import build_context, build_style_context, validate_outline, normalize_outline
 from agents.base import get_llm, create_system_message
 from agents.structured_output import extract_json_payload, resolve_structured_output
+from runtime_schemas import build_research_packet, build_style_packet, serialize_models, validation_error_message
 
 
 async def run(state: dict) -> dict[str, Any]:
@@ -29,10 +31,37 @@ async def run(state: dict) -> dict[str, Any]:
     llm = get_llm(model="gpt-4o", temperature=0.7)
 
     user_intent = state.get("user_intent", "")
-    source_docs = state.get("source_docs", [])
-    search_results = state.get("search_results", [])
-    style_id = state.get("style_id", "")
-    style_config = state.get("style_config", {})
+    try:
+        research_packet = build_research_packet(
+            user_intent,
+            state.get("research_packet", {}).get("source_docs", state.get("source_docs", [])),
+            state.get("research_packet", {}).get("search_results", state.get("search_results", [])),
+        )
+        style_packet = build_style_packet(
+            style_id=state.get("style_id", ""),
+            style_config=state.get("style_packet", state.get("style_config", {})),
+            theme_config=state.get("theme_config", {}),
+        )
+    except ValidationError as exc:
+        message = f"运行时 schema 校验失败: {validation_error_message(exc)}"
+        return {
+            "outline": [],
+            "current_status": "planner_error",
+            "current_agent": "planner",
+            "error": message,
+            "messages": state.get("messages", []) + [
+                {
+                    "role": "assistant",
+                    "content": f"策划师输入校验失败：{message}",
+                    "agent": "planner",
+                }
+            ],
+        }
+
+    source_docs = serialize_models(research_packet.source_docs)
+    search_results = serialize_models(research_packet.search_results)
+    style_id = style_packet.style_id
+    style_config = serialize_models(style_packet)
 
     # 构建上下文
     research_context = build_context(source_docs, search_results)
@@ -87,6 +116,12 @@ async def run(state: dict) -> dict[str, Any]:
 
     return {
         "outline": outline,
+        "research_packet": serialize_models(research_packet),
+        "style_packet": style_config,
+        "source_docs": source_docs,
+        "search_results": search_results,
+        "style_id": style_id,
+        "style_config": style_config,
         "current_status": "outline_generated",
         "current_agent": "planner",
         "planner_diagnostics": {

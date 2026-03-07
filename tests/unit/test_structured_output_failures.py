@@ -142,6 +142,7 @@ class TestStructuredOutputRepair:
                         "path_hint": "path_b",
                         "layout_intent": "cover",
                         "content": {"bullet_points": ["先稳住"]},
+                        "image_prompt": "Writer draft about stabilizing before growth",
                     }
                 ],
                 "style_config": {

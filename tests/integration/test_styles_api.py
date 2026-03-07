@@ -119,6 +119,8 @@ class TestStylesAPI:
         data = response.json()
         assert "session_id" in data
         assert self.session_store[data["session_id"]]["user_intent"] == "Test presentation"
+        assert self.session_store[data["session_id"]]["research_packet"]["query"] == "Test presentation"
+        assert self.session_store[data["session_id"]]["style_packet"]["style_id"] == "organic"
 
     def test_project_create_records_initial_revision(self):
         """Test project creation records an initial revision snapshot"""
@@ -227,6 +229,8 @@ class TestStylesAPI:
         assert self.revisions[-1]["state"]["theme_config"]["style_id"] == "01-snoopy"
         assert self.session_store[session_id]["style_config"]["render_path_preference"] == "path_a"
         assert self.session_store[session_id]["style_config"]["render_paths"] == ["path_a"]
+        assert self.session_store[session_id]["style_packet"]["style_id"] == "01-snoopy"
+        assert self.session_store[session_id]["style_packet"]["render_paths"] == ["path_a"]
 
     def test_project_create_with_custom_style(self):
         """Test creating project with different styles"""
