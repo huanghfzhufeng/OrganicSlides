@@ -44,6 +44,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      WORKER_BASE_URL: http://worker:8001
     ports:
       - "8000:8000"
     volumes:
@@ -54,7 +56,30 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      worker:
+        condition: service_started
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ==================== Worker ====================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: masppt-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "8001"
+    volumes:
+      - ./backend:/app
+      - ./output:/app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn worker_app:app --host 0.0.0.0 --port 8001 --reload
 
   # ==================== Frontend ====================
   frontend:

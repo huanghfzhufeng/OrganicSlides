@@ -69,7 +69,8 @@ Examples:
 
 ## 5. Phase 3: Service Architecture and Scalability
 
-- [ ] `REQ-019` Split API service and worker service.
+- [x] `REQ-019` Split API service and worker service.
+  Validation completed on `2026-03-07` with a dedicated `worker_app`, API-to-worker dispatch, persisted SSE event streaming, updated `docker-compose` topology, `tests/unit/test_generation_tracking.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-020` Add queue-based job dispatch and worker consumption.
 - [ ] `REQ-021` Make jobs resumable and idempotent.
 - [ ] `REQ-022` Move generated artifacts, thumbnails, and previews to object storage.

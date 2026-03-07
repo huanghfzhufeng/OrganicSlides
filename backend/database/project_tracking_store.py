@@ -215,3 +215,74 @@ async def record_job_event(
             "event_type": event.event_type,
             "status": event.status,
         }
+
+
+async def get_generation_job(job_id: Union[str, uuid.UUID]) -> Optional[dict]:
+    """Fetch a single generation job record."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(GenerationJob).where(GenerationJob.id == _as_uuid(job_id))
+        )
+        job = result.scalar_one_or_none()
+        if job is None:
+            return None
+
+        return {
+            "job_id": str(job.id),
+            "session_id": job.session_id,
+            "project_id": str(job.project_id) if job.project_id else None,
+            "trigger": job.trigger,
+            "status": job.status,
+            "current_agent": job.current_agent,
+            "error_message": job.error_message,
+            "pptx_path": job.pptx_path or "",
+        }
+
+
+async def find_active_generation_job(session_id: str, trigger: str) -> Optional[dict]:
+    """Return the most recent non-terminal job for a session/trigger pair."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(GenerationJob)
+            .where(
+                GenerationJob.session_id == session_id,
+                GenerationJob.trigger == trigger,
+                GenerationJob.status.notin_(["completed", "error"]),
+            )
+            .order_by(GenerationJob.created_at.desc())
+        )
+        job = result.scalars().first()
+        if job is None:
+            return None
+
+        return {
+            "job_id": str(job.id),
+            "status": job.status,
+            "trigger": job.trigger,
+            "current_agent": job.current_agent,
+        }
+
+
+async def list_job_events(job_id: Union[str, uuid.UUID]) -> list[dict]:
+    """List all persisted events for a job ordered by creation time."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(JobEvent)
+            .where(JobEvent.job_id == _as_uuid(job_id))
+            .order_by(JobEvent.created_at.asc(), JobEvent.id.asc())
+        )
+        events = result.scalars().all()
+        return [
+            {
+                "event_id": str(event.id),
+                "job_id": str(event.job_id) if event.job_id else None,
+                "session_id": event.session_id,
+                "event_type": event.event_type,
+                "agent": event.agent,
+                "status": event.status,
+                "message": event.message,
+                "payload": dict(event.payload or {}),
+                "created_at": event.created_at.isoformat(),
+            }
+            for event in events
+        ]

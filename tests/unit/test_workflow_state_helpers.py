@@ -9,6 +9,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
+import app_lifecycle
 import main
 
 
@@ -89,9 +90,9 @@ class TestWorkflowStateHelpers:
     async def test_connect_optional_redis_returns_false_when_unavailable(self, monkeypatch):
         connect = AsyncMock(side_effect=RuntimeError("redis down"))
 
-        monkeypatch.setattr(main.redis_client, "connect", connect)
+        monkeypatch.setattr(app_lifecycle.redis_client, "connect", connect)
 
-        result = await main._connect_optional_redis()
+        result = await app_lifecycle._connect_optional_redis()
 
         assert result is False
         connect.assert_awaited_once()
@@ -100,8 +101,8 @@ class TestWorkflowStateHelpers:
     async def test_disconnect_optional_redis_swallow_errors(self, monkeypatch):
         disconnect = AsyncMock(side_effect=RuntimeError("redis down"))
 
-        monkeypatch.setattr(main.redis_client, "disconnect", disconnect)
+        monkeypatch.setattr(app_lifecycle.redis_client, "disconnect", disconnect)
 
-        await main._disconnect_optional_redis()
+        await app_lifecycle._disconnect_optional_redis()
 
         disconnect.assert_awaited_once()
