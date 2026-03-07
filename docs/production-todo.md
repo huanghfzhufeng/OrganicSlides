@@ -62,7 +62,8 @@ Examples:
   Validation completed on `2026-03-07` with StylePacket-driven visual context, style-aware render-path and Path B prompt validation, `tests/unit/test_visual_style_packet.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [x] `REQ-016` Add writer quality gate and repair loop.
   Validation completed on `2026-03-07` with writer quality gates for outline-title preservation, bullet density, Path B render-title limits, automatic repair via `tests/unit/test_writer_quality_gate.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-017` Add visual quality gate and repair loop.
+- [x] `REQ-017` Add visual quality gate and repair loop.
+  Validation completed on `2026-03-07` with visual quality gates for render-path policy, Path A HTML integrity, Path B prompt depth, automatic repair via `tests/unit/test_visual_quality_gate.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-018` Add renderer preflight validation for assets, prompts, HTML, and routing.
 
 ## 5. Phase 3: Service Architecture and Scalability
