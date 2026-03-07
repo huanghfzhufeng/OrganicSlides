@@ -7,6 +7,8 @@ from typing import TypedDict, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
+from runtime_schemas import build_research_packet, build_style_packet, serialize_models
+
 
 class SlideType(str, Enum):
     """幻灯片类型"""
@@ -78,6 +80,7 @@ class PresentationState(TypedDict, total=False):
     # RAG 相关
     source_docs: List[dict]  # 检索到的上下文文档
     search_results: List[dict]  # 联网搜索结果
+    research_packet: dict       # Validated ResearchPacket
 
     # 策划阶段产物 (HITL 介入点)
     outline: List[dict]  # Each item: {id, title (assertion), visual_type, path_hint, key_points, notes}
@@ -89,6 +92,7 @@ class PresentationState(TypedDict, total=False):
     # 视觉风格配置 (新样式系统)
     style_id: str          # e.g. "snoopy", "neo-brutalism", "nyt-editorial"
     style_config: dict     # Full style config from style registry
+    style_packet: dict     # Validated StylePacket
 
     # 视觉风格配置 (旧系统，向后兼容)
     theme_config: dict
@@ -155,17 +159,26 @@ def create_initial_state(
             "colors": get_theme_colors(theme),
         }
 
+    research_packet = build_research_packet(user_intent, [], [])
+    style_packet = build_style_packet(
+        style_id=style_id or theme_config.get("style", ""),
+        style_config=style_config or {},
+        theme_config=theme_config,
+    )
+
     return PresentationState(
         session_id=session_id,
         user_intent=user_intent,
         source_docs=[],
         search_results=[],
+        research_packet=serialize_models(research_packet),
         outline=[],
         outline_approved=False,
         slides_data=[],
         theme_config=theme_config,
         style_id=style_id or "",
         style_config=style_config or {},
+        style_packet=serialize_models(style_packet),
         slide_render_plans=[],
         render_path="path_a",
         render_progress=[],
