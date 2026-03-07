@@ -22,8 +22,13 @@ from database.project_tracking_store import (
     count_project_revisions,
     create_project_revision,
     find_session_active_generation_job,
+    get_generation_failure_for_job,
+    get_generation_job,
     get_generation_failure,
+    list_failed_generation_jobs,
+    list_job_events,
     list_project_revisions,
+    list_session_generation_jobs,
     restore_project_revision as restore_project_revision_snapshot,
     sync_project_state,
 )
@@ -32,7 +37,12 @@ from database.workflow_state_store import (
     save_workflow_state,
     update_workflow_state,
 )
-from auth import auth_router, get_current_user, get_current_active_user
+from auth import (
+    auth_router,
+    get_current_active_user,
+    get_current_operator_user,
+    get_current_user,
+)
 from auth.service import AuthService
 from event_stream import stream_job_events
 from job_queue import enqueue_generation_job
@@ -173,6 +183,26 @@ class RetryRequest(BaseModel):
         if value not in {"start_workflow", "resume_workflow"}:
             raise ValueError("trigger must be start_workflow or resume_workflow")
         return value
+
+
+class OperatorRevisionRestoreRequest(BaseModel):
+    revision_number: Optional[int] = None
+    revision_id: Optional[str] = None
+
+    @field_validator("revision_number")
+    @classmethod
+    def operator_revision_number_must_be_positive(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value < 1:
+            raise ValueError("revision_number must be greater than 0")
+        return value
+
+    @model_validator(mode="after")
+    def require_exactly_one_revision_selector(self) -> "OperatorRevisionRestoreRequest":
+        has_revision_number = self.revision_number is not None
+        has_revision_id = bool(self.revision_id)
+        if has_revision_number == has_revision_id:
+            raise ValueError("Provide exactly one of revision_number or revision_id")
+        return self
 
 
 async def _authorize_project_access(
@@ -782,6 +812,137 @@ async def retry_project_generation(
         "session_id": data.session_id,
         "job_id": job["job_id"],
         "trigger": trigger,
+    }
+
+
+@app.get("/api/v1/operator/jobs/failed")
+async def operator_list_failed_jobs(
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_operator_user),
+):
+    """List recent failed jobs for operator triage."""
+    jobs = await list_failed_generation_jobs(limit=limit)
+    return {
+        "operator": current_user.email,
+        "jobs": jobs,
+        "total": len(jobs),
+    }
+
+
+@app.get("/api/v1/operator/jobs/{job_id}")
+async def operator_get_job_detail(
+    job_id: str,
+    current_user: User = Depends(get_current_operator_user),
+):
+    """Return job details, failure summary, and persisted events for operators."""
+    job = await get_generation_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return {
+        "operator": current_user.email,
+        "job": job,
+        "failure": await get_generation_failure_for_job(job_id),
+        "events": await list_job_events(job_id),
+    }
+
+
+@app.get("/api/v1/operator/sessions/{session_id}/support")
+async def operator_get_support_snapshot(
+    session_id: str,
+    current_user: User = Depends(get_current_operator_user),
+):
+    """Return a single support snapshot for a failed or in-progress session."""
+    state = await _load_session_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    jobs = await list_session_generation_jobs(session_id, limit=10)
+    latest_job_id = jobs[0]["job_id"] if jobs else None
+    latest_job_events = await list_job_events(latest_job_id) if latest_job_id else []
+    return {
+        "operator": current_user.email,
+        "session_id": session_id,
+        "current_state": {
+            "status": state.get("current_status", "unknown"),
+            "current_agent": state.get("current_agent", ""),
+            "error": state.get("error"),
+        },
+        "preview": build_project_preview(state),
+        "failure": await get_generation_failure(session_id),
+        "revisions": await list_project_revisions(session_id, limit=10),
+        "jobs": jobs,
+        "latest_job_events": latest_job_events[-25:],
+    }
+
+
+@app.post("/api/v1/operator/jobs/{job_id}/retry")
+async def operator_retry_failed_job(
+    job_id: str,
+    current_user: User = Depends(get_current_operator_user),
+):
+    """Retry a failed job using the same session and trigger."""
+    job = await get_generation_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    active_job = await find_session_active_generation_job(job["session_id"])
+    if active_job is not None:
+        raise HTTPException(status_code=409, detail="Generation is already in progress")
+
+    queued = await _enqueue_worker_job(job["session_id"], job["trigger"])
+    return {
+        "operator": current_user.email,
+        "status": "retry_queued",
+        "source_job_id": job_id,
+        "session_id": job["session_id"],
+        "job_id": queued["job_id"],
+        "trigger": job["trigger"],
+    }
+
+
+@app.post("/api/v1/operator/sessions/{session_id}/restore")
+async def operator_restore_project_revision(
+    session_id: str,
+    data: OperatorRevisionRestoreRequest,
+    current_user: User = Depends(get_current_operator_user),
+):
+    """Restore a historical revision without requiring project-level user access."""
+    state = await _load_session_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    active_job = await find_session_active_generation_job(session_id)
+    if active_job is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot restore revisions while a generation job is active",
+        )
+
+    restored = await restore_project_revision_snapshot(
+        session_id,
+        revision_number=data.revision_number,
+        revision_id=data.revision_id,
+    )
+    if restored is None:
+        raise HTTPException(status_code=404, detail="Revision not found")
+
+    restored_state = restored["state"]
+    return {
+        "operator": current_user.email,
+        "status": "revision_restored",
+        "session_id": session_id,
+        "restored_revision": restored["restored_revision"],
+        "restoration_revision": restored["restoration_revision"],
+        "preview": build_project_preview(restored_state),
+        "current_state": {
+            "status": restored_state.get("current_status", "unknown"),
+            "current_agent": restored_state.get("current_agent", ""),
+            "outline": restored_state.get("outline", []),
+            "style_id": restored_state.get("style_id", ""),
+            "pptx_path": restored_state.get("pptx_path", ""),
+            "last_restored_revision_number": restored_state.get("last_restored_revision_number"),
+        },
     }
 
 

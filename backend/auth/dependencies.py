@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database.postgres import get_db
 from database.models import User
 from auth.service import AuthService
@@ -78,3 +79,24 @@ async def get_current_active_user(
         )
     
     return user
+
+
+async def get_current_operator_user(
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    """
+    获取当前 operator 用户。
+
+    仅允许 `OPERATOR_EMAILS` 中声明的邮箱访问运维/支持接口。
+    """
+    allowed_emails = {
+        email.strip().lower()
+        for email in settings.OPERATOR_EMAILS.split(",")
+        if email.strip()
+    }
+    if current_user.email.lower() not in allowed_emails:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operator access required",
+        )
+    return current_user
