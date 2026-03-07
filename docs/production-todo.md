@@ -79,7 +79,8 @@ Examples:
   Validation completed on `2026-03-07` with object storage abstraction, renderer uploads for presentations/slides/thumbnails, asset proxy API, MinIO compose topology, `tests/unit/test_object_storage.py`, `tests/integration/test_styles_api.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [x] `REQ-023` Add asset retention, cleanup, and metadata jobs.
   Validation completed on `2026-03-07` with stored asset metadata, worker cleanup loop for expired objects, retention settings, `tests/unit/test_asset_cleanup.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-024` Add staging and production environment separation.
+- [x] `REQ-024` Add staging and production environment separation.
+  Validation completed on `2026-03-07` with environment-specific settings validation, staging/production env templates, standalone compose files, production frontend image, `tests/unit/test_settings_envs.py`, compose config checks, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 
 ## 6. Phase 4: Product and User Experience
 

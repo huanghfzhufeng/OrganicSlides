@@ -4,8 +4,12 @@
 """
 
 from functools import lru_cache
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
+
+
+_DEFAULT_JWT_SECRET = "your-super-secret-key-change-in-production"
 
 
 class Settings(BaseSettings):
@@ -16,7 +20,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # JWT 认证
-    JWT_SECRET_KEY: str = "your-super-secret-key-change-in-production"
+    JWT_SECRET_KEY: str = _DEFAULT_JWT_SECRET
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 小时
 
@@ -51,6 +55,27 @@ class Settings(BaseSettings):
     ASSET_RETENTION_HOURS: int = 168
     ASSET_CLEANUP_INTERVAL_SECONDS: int = 300
     ASSET_CLEANUP_BATCH_SIZE: int = 100
+
+    @model_validator(mode="after")
+    def validate_environment(self) -> "Settings":
+        self.APP_ENV = self.APP_ENV.lower()
+        valid_envs = {"development", "staging", "production"}
+        if self.APP_ENV not in valid_envs:
+            raise ValueError(f"APP_ENV must be one of {sorted(valid_envs)}")
+
+        if self.APP_ENV in {"staging", "production"}:
+            if self.DEBUG:
+                raise ValueError(f"DEBUG must be false when APP_ENV={self.APP_ENV}")
+            if self.JWT_SECRET_KEY == _DEFAULT_JWT_SECRET:
+                raise ValueError(
+                    f"JWT_SECRET_KEY must be overridden when APP_ENV={self.APP_ENV}"
+                )
+            if self.OBJECT_STORAGE_BACKEND.lower() == "local":
+                raise ValueError(
+                    f"OBJECT_STORAGE_BACKEND must not be 'local' when APP_ENV={self.APP_ENV}"
+                )
+
+        return self
 
     class Config:
         env_file = "../.env"  # 从项目根目录读取
