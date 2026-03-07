@@ -304,6 +304,47 @@ class TestStylesAPI:
         )
         assert response.status_code == 200
 
+    def test_download_reads_pptx_from_object_storage(self, monkeypatch):
+        """Download endpoint should stream object-stored presentations when a storage key exists"""
+        project = self._create_project(prompt="Object storage download test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+        self.session_store[session_id]["pptx_path"] = "http://localhost:8000/api/v1/assets/sessions/test/presentation.pptx"
+        self.session_store[session_id]["pptx_storage_key"] = "sessions/test/presentation.pptx"
+
+        class FakeStorage:
+            def read_object(self, key):
+                assert key == "sessions/test/presentation.pptx"
+                return (
+                    b"pptx-from-object-storage",
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                )
+
+        monkeypatch.setattr(self.main, "get_object_storage", lambda: FakeStorage())
+
+        response = self.client.get(
+            f"/api/v1/project/download/{session_id}",
+            params={"access_token": access_token},
+        )
+
+        assert response.status_code == 200
+        assert response.content == b"pptx-from-object-storage"
+
+    def test_asset_endpoint_reads_object_storage(self, monkeypatch):
+        """Asset proxy endpoint should serve thumbnail bytes from object storage"""
+        class FakeStorage:
+            def read_object(self, key):
+                assert key == "sessions/demo/thumbnails/thumb_001.jpg"
+                return (b"thumb-bytes", "image/jpeg")
+
+        monkeypatch.setattr(self.main, "get_object_storage", lambda: FakeStorage())
+
+        response = self.client.get("/api/v1/assets/sessions/demo/thumbnails/thumb_001.jpg")
+
+        assert response.status_code == 200
+        assert response.content == b"thumb-bytes"
+        assert response.headers["content-type"].startswith("image/jpeg")
+
 
 @pytest.mark.integration
 class TestStyleDataIntegration:

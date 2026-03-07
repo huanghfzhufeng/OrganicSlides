@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -9,8 +10,25 @@ from fastapi import FastAPI
 
 from database.postgres import close_db, init_db
 from database.redis_client import redis_client
+from services.object_storage import init_object_storage
 
 logger = logging.getLogger(__name__)
+
+
+async def _init_object_storage_with_retry() -> None:
+    for attempt in range(1, 11):
+        try:
+            init_object_storage()
+            return
+        except Exception:
+            if attempt == 10:
+                raise
+            logger.warning(
+                "Object storage init attempt %d failed; retrying",
+                attempt,
+                exc_info=True,
+            )
+            await asyncio.sleep(1)
 
 
 async def _connect_optional_redis() -> bool:
@@ -40,6 +58,9 @@ def build_lifespan(service_name: str):
         print(f"🚀 {service_name} 启动中...")
         await init_db()
         print("✅ PostgreSQL 数据库初始化完成")
+
+        await _init_object_storage_with_retry()
+        print("✅ 对象存储初始化完成")
 
         if await _connect_optional_redis():
             print("✅ Redis 连接成功")

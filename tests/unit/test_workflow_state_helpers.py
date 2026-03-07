@@ -106,3 +106,30 @@ class TestWorkflowStateHelpers:
         await app_lifecycle._disconnect_optional_redis()
 
         disconnect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_build_lifespan_initializes_object_storage(self, monkeypatch):
+        init_db = AsyncMock()
+        close_db = AsyncMock()
+        connect_redis = AsyncMock(return_value=False)
+        disconnect_redis = AsyncMock()
+        init_storage = AsyncMock()
+
+        monkeypatch.setattr(app_lifecycle, "init_db", init_db)
+        monkeypatch.setattr(app_lifecycle, "close_db", close_db)
+        monkeypatch.setattr(app_lifecycle, "_connect_optional_redis", connect_redis)
+        monkeypatch.setattr(app_lifecycle, "_disconnect_optional_redis", disconnect_redis)
+        monkeypatch.setattr(app_lifecycle, "_init_object_storage_with_retry", init_storage)
+
+        lifespan = app_lifecycle.build_lifespan("Test Service")
+
+        class FakeApp:
+            pass
+
+        async with lifespan(FakeApp()):
+            pass
+
+        init_db.assert_awaited_once()
+        init_storage.assert_awaited_once()
+        close_db.assert_awaited_once()
+        disconnect_redis.assert_awaited_once()

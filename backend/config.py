@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     WORKER_JOB_STALE_SECONDS: int = 120
     WORKER_JOB_HEARTBEAT_SECONDS: int = 15
 
+    # 对象存储
+    OBJECT_STORAGE_BACKEND: str = "local"  # "local" | "s3"
+    OBJECT_STORAGE_LOCAL_ROOT: str = "object_storage"
+    OBJECT_STORAGE_PUBLIC_BASE_URL: str = "http://localhost:8000/api/v1/assets"
+    OBJECT_STORAGE_BUCKET: str = "masppt-assets"
+    OBJECT_STORAGE_ENDPOINT_URL: str = "http://127.0.0.1:9000"
+    OBJECT_STORAGE_ACCESS_KEY: str = "minioadmin"
+    OBJECT_STORAGE_SECRET_KEY: str = "minioadmin"
+    OBJECT_STORAGE_REGION: str = "us-east-1"
+    OBJECT_STORAGE_SECURE: bool = False
+
     class Config:
         env_file = "../.env"  # 从项目根目录读取
         env_file_encoding = "utf-8"
