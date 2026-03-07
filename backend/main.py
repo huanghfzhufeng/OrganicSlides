@@ -7,7 +7,6 @@ import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-import httpx
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -16,7 +15,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app_lifecycle import build_lifespan
-from state import PresentationState, create_initial_state
+from state import create_initial_state
 from database.postgres import get_db
 from database.models import User, Project
 from database.project_tracking_store import (
@@ -31,10 +30,10 @@ from database.workflow_state_store import (
 from auth import auth_router, get_current_user, get_current_active_user
 from auth.service import AuthService
 from event_stream import stream_job_events
+from job_queue import enqueue_generation_job
 from runtime_schemas import build_style_packet, serialize_models
 from styles.registry import get_registry
 from styles.recommender import StyleRecommender
-from worker_client import dispatch_worker_job
 
 async def _load_session_state(session_id: str) -> Optional[dict]:
     """Load workflow state from durable PostgreSQL storage only."""
@@ -169,32 +168,23 @@ async def _authorize_project_access(
 
 # ==================== SSE 流式响应 ====================
 
-async def generate_sse_events(session_id: str, _state: PresentationState):
-    """Proxy persisted worker job events as SSE."""
-    job = await _dispatch_worker_job(session_id, "start_workflow")
-    async for chunk in stream_job_events(job["job_id"]):
+async def generate_sse_events(job_id: str):
+    """Proxy persisted queued worker job events as SSE."""
+    async for chunk in stream_job_events(job_id):
         yield chunk
 
 
-async def generate_resume_sse_events(session_id: str):
-    """Proxy persisted worker job events for resumed workflows as SSE."""
-    job = await _dispatch_worker_job(session_id, "resume_workflow")
-    async for chunk in stream_job_events(job["job_id"]):
+async def generate_resume_sse_events(job_id: str):
+    """Proxy persisted queued worker job events for resumed workflows as SSE."""
+    async for chunk in stream_job_events(job_id):
         yield chunk
 
 
-async def _dispatch_worker_job(session_id: str, trigger: str) -> dict:
+async def _enqueue_worker_job(session_id: str, trigger: str) -> dict:
     try:
-        return await dispatch_worker_job(session_id, trigger)
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            raise HTTPException(status_code=404, detail="Session not found")
-        raise HTTPException(
-            status_code=503,
-            detail=f"Worker request failed with status {exc.response.status_code}",
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail=f"Worker unavailable: {exc}") from exc
+        return await enqueue_generation_job(session_id, trigger, source="api")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # ==================== API 端点 ====================
@@ -364,9 +354,10 @@ async def start_workflow(
     state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
+    job = await _enqueue_worker_job(session_id, "start_workflow")
     return StreamingResponse(
-        generate_sse_events(session_id, state),
+        generate_sse_events(job["job_id"]),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -513,9 +504,10 @@ async def resume_workflow(
     state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
+    job = await _enqueue_worker_job(session_id, "resume_workflow")
     return StreamingResponse(
-        generate_resume_sse_events(session_id),
+        generate_resume_sse_events(job["job_id"]),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
