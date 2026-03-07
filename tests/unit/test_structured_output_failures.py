@@ -38,7 +38,7 @@ class TestStructuredOutputRepair:
                   "slide_type": "cover",
                   "visual_type": "cover",
                   "key_points": [],
-                  "path_hint": "path_b",
+                  "path_hint": "path_a",
                   "notes": "封面"
                 },
                 {
