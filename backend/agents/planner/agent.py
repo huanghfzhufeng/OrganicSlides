@@ -65,7 +65,7 @@ async def run(state: dict) -> dict[str, Any]:
 
     # 构建上下文
     research_context = build_context(source_docs, search_results)
-    style_context = build_style_context(style_id, style_config)
+    style_context = build_style_context(style_config)
 
     # 构建用户消息
     user_message = PLANNER_USER_TEMPLATE.format(
@@ -84,12 +84,13 @@ async def run(state: dict) -> dict[str, Any]:
     result = await resolve_structured_output(
         llm=llm,
         raw_content=response.content,
-        parser=_parse_outline_response,
-        validator=_validate_outline_response,
+        parser=lambda content: _parse_outline_response(content, style_config),
+        validator=lambda outline: _validate_outline_response(outline, style_config),
         repair_system_prompt=PLANNER_REPAIR_SYSTEM_PROMPT,
         repair_user_template=PLANNER_REPAIR_USER_TEMPLATE,
         repair_context={
             "user_intent": user_intent,
+            "style_context": style_context,
         },
     )
 
@@ -138,7 +139,7 @@ async def run(state: dict) -> dict[str, Any]:
     }
 
 
-def _parse_outline_response(content: str) -> list:
+def _parse_outline_response(content: str, style_config: dict | None = None) -> list:
     """解析 LLM 响应中的大纲"""
     json_str = extract_json_payload(content)
     result = json.loads(json_str)
@@ -154,13 +155,13 @@ def _parse_outline_response(content: str) -> list:
         if "id" not in section:
             section["id"] = f"section_{uuid.uuid4().hex[:8]}"
 
-    return normalize_outline(outline)
+    return normalize_outline(outline, style_config)
 
 
-def _validate_outline_response(outline: list) -> tuple[bool, str]:
+def _validate_outline_response(outline: list, style_config: dict | None = None) -> tuple[bool, str]:
     if not outline:
         return False, "outline cannot be empty"
-    return validate_outline(outline)
+    return validate_outline(outline, style_config)
 
 
 def _build_success_message(outline: list, repaired: bool) -> str:
