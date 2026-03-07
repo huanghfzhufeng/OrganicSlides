@@ -106,10 +106,11 @@ class PresentationState(TypedDict, total=False):
 
     # 资产生成
     generated_assets: List[dict]  # 生成的图片/图表
-    slide_files: List[dict]        # Intermediate files: [{page_number, path, type}, ...]
+    slide_files: List[dict]        # Object-backed slide artifacts: [{page_number, path, storage_key, type}, ...]
 
     # 渲染输出
-    pptx_path: str  # 最终文件路径
+    pptx_path: str          # 最终文件访问 URL
+    pptx_storage_key: str   # 最终文件对象存储 key
 
     # 流程控制
     current_status: str  # 用于前端进度条
@@ -185,6 +186,7 @@ def create_initial_state(
         generated_assets=[],
         slide_files=[],
         pptx_path="",
+        pptx_storage_key="",
         current_status="initialized",
         current_agent="",
         error=None,

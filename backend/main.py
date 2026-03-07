@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,7 @@ from auth.service import AuthService
 from event_stream import stream_job_events
 from job_queue import enqueue_generation_job
 from runtime_schemas import build_style_packet, serialize_models
+from services.object_storage import get_object_storage
 from styles.registry import get_registry
 from styles.recommender import StyleRecommender
 
@@ -265,6 +266,17 @@ async def get_style_sample(style_id: str):
         raise HTTPException(status_code=404, detail="Sample image file not found on disk")
 
     return FileResponse(str(file_path), media_type="image/png")
+
+
+@app.get("/api/v1/assets/{object_key:path}")
+async def get_object_asset(object_key: str):
+    """Proxy generated assets from object storage."""
+    try:
+        payload, content_type = get_object_storage().read_object(object_key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    return Response(content=payload, media_type=content_type)
 
 
 @app.post("/api/v1/project/create")
@@ -529,11 +541,28 @@ async def download_pptx(
     state = await _load_session_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
+    storage_key = state.get("pptx_storage_key", "")
+    if storage_key:
+        try:
+            payload, content_type = get_object_storage().read_object(storage_key)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="PPTX file not found")
+
+        return Response(
+            content=payload,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="presentation_{session_id[:8]}.pptx"'
+                )
+            },
+        )
+
     pptx_path = state.get("pptx_path", "")
     if not pptx_path or not Path(pptx_path).exists():
         raise HTTPException(status_code=404, detail="PPTX file not found")
-    
+
     return FileResponse(
         pptx_path,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",

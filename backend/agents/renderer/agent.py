@@ -29,6 +29,7 @@ from agents.renderer.tools import (
     save_presentation,
 )
 from services.pptx_assembler import assemble_presentation
+from services.object_storage import StoredObject, get_object_storage
 
 _OUTPUT_DIR = Path(__file__).parent.parent.parent / "output"
 _OUTPUT_DIR.mkdir(exist_ok=True)
@@ -135,29 +136,13 @@ async def _run_from_render_plans(
 
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RENDERS)
     total = len(slide_render_plans)
-    progress_events: list[dict] = []
-
     async def _one_with_semaphore(plan: dict, idx: int) -> SlideRenderResult:
         async with semaphore:
             loop = asyncio.get_running_loop()
             slide_data = {**plan, "render_path": plan.get("render_path", "path_a")}
-            result = await loop.run_in_executor(
+            return await loop.run_in_executor(
                 None, lambda: render_slide(slide_data, style_config, idx)
             )
-            # Generate thumbnail for Path B results
-            thumbnail_url: Optional[str] = None
-            if result.success and result.render_path in ("path_b", "path_a_fallback"):
-                thumbnail_url = await _generate_thumbnail_async(result.output_path, session_id, idx)
-
-            progress_events.append(_make_render_progress_event(
-                slide_number=plan.get("page_number", idx + 1),
-                total_slides=total,
-                render_path=result.render_path,
-                status="complete" if result.success else "failed",
-                thumbnail_url=thumbnail_url,
-                error=result.error,
-            ))
-            return result
 
     tasks = [_one_with_semaphore(p, i) for i, p in enumerate(slide_render_plans)]
     results: list[SlideRenderResult] = list(await asyncio.gather(*tasks))
@@ -178,17 +163,19 @@ async def _run_from_render_plans(
     except Exception as exc:
         return _error_result(state, f"Assembly failed: {exc}")
 
-    slide_files = [
-        {
-            "page_number": r.slide_index + 1,
-            "path": r.output_path,
-            "type": "html" if r.render_path == "path_a" else "image",
-        }
-        for r in successful
-    ]
+    try:
+        stored_presentation = await _upload_presentation_async(final_path, session_id)
+        slide_files, progress_events = await _persist_slide_outputs(
+            results,
+            session_id,
+            total,
+        )
+    except Exception as exc:
+        return _error_result(state, f"Object storage failed: {exc}")
+
     failed_errors = [f"Slide {r.slide_index+1}: {r.error}" for r in results if not r.success]
     return _success_result(
-        state, final_path, slide_files, total, failed_errors, progress_events
+        state, stored_presentation, slide_files, total, failed_errors, progress_events
     )
 
 
@@ -205,27 +192,12 @@ async def _run_dual_path(
     """Dual-path rendering directly from slides_data when render_plans absent."""
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RENDERS)
     total = len(slides_data)
-    progress_events: list[dict] = []
-
     async def _one(slide_data: dict, idx: int) -> SlideRenderResult:
         async with semaphore:
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
+            return await loop.run_in_executor(
                 None, lambda: render_slide(slide_data, style_config, idx)
             )
-            thumbnail_url: Optional[str] = None
-            if result.success and result.render_path in ("path_b", "path_a_fallback"):
-                thumbnail_url = await _generate_thumbnail_async(result.output_path, session_id, idx)
-
-            progress_events.append(_make_render_progress_event(
-                slide_number=idx + 1,
-                total_slides=total,
-                render_path=result.render_path,
-                status="complete" if result.success else "failed",
-                thumbnail_url=thumbnail_url,
-                error=result.error,
-            ))
-            return result
 
     tasks = [_one(slide, i) for i, slide in enumerate(slides_data)]
     results: list[SlideRenderResult] = list(await asyncio.gather(*tasks))
@@ -244,14 +216,19 @@ async def _run_dual_path(
     except Exception as exc:
         return _error_result(state, f"Assembly failed: {exc}")
 
-    slide_files = [
-        {"page_number": r.slide_index + 1, "path": r.output_path,
-         "type": "html" if r.render_path == "path_a" else "image"}
-        for r in successful
-    ]
+    try:
+        stored_presentation = await _upload_presentation_async(final_path, session_id)
+        slide_files, progress_events = await _persist_slide_outputs(
+            results,
+            session_id,
+            total,
+        )
+    except Exception as exc:
+        return _error_result(state, f"Object storage failed: {exc}")
+
     failed_errors = [f"Slide {r.slide_index+1}: {r.error}" for r in results if not r.success]
     return _success_result(
-        state, final_path, slide_files, total, failed_errors, progress_events
+        state, stored_presentation, slide_files, total, failed_errors, progress_events
     )
 
 
@@ -271,8 +248,10 @@ async def _run_legacy(
         filepath = await loop.run_in_executor(
             None, lambda: _build_pptx_legacy(slides_data, style_config, session_id)
         )
+        stored_presentation = await _upload_presentation_async(filepath, session_id)
         return {
-            "pptx_path": filepath,
+            "pptx_path": stored_presentation.url,
+            "pptx_storage_key": stored_presentation.key,
             "current_status": "render_complete",
             "current_agent": "renderer",
             "messages": state.get("messages", []) + [{
@@ -322,7 +301,7 @@ def _generate_thumbnail(image_path: str, session_id: str, slide_index: int) -> O
     """
     Create a small JPEG thumbnail (320×180) from a PNG slide image.
 
-    Returns the URL path to the thumbnail (served via /static), or None on failure.
+    Returns the local thumbnail path, or None on failure.
     """
     try:
         from PIL import Image  # type: ignore
@@ -344,8 +323,7 @@ def _generate_thumbnail(image_path: str, session_id: str, slide_index: int) -> O
                 img = img.convert("RGB")
             img.save(str(thumb_path), "JPEG", quality=80, optimize=True)
 
-        # Return as URL path accessible via FastAPI /static mount
-        return f"/output/thumbnails/{thumb_name}"
+        return str(thumb_path)
 
     except Exception:
         return None
@@ -407,7 +385,7 @@ def _make_render_progress_event(
 
 def _success_result(
     state: dict,
-    final_path: str,
+    stored_presentation: StoredObject,
     slide_files: list[dict],
     total: int,
     failed_errors: list[str],
@@ -418,7 +396,8 @@ def _success_result(
     if failed_errors:
         content += f"，{len(failed_errors)} 页失败"
     result: dict[str, Any] = {
-        "pptx_path": final_path,
+        "pptx_path": stored_presentation.url,
+        "pptx_storage_key": stored_presentation.key,
         "slide_files": slide_files,
         "current_status": "render_complete",
         "current_agent": "renderer",
@@ -444,3 +423,101 @@ def _error_result(state: dict, message: str) -> dict[str, Any]:
             "agent": "renderer",
         }],
     }
+
+
+def _build_object_key(session_id: str, category: str, filename: str) -> str:
+    return f"sessions/{session_id}/{category}/{filename}"
+
+
+def _slide_artifact_kind(result: SlideRenderResult) -> str:
+    if result.render_path in ("path_a", "path_a_fallback", "fallback_text"):
+        return "html"
+    return "image"
+
+
+def _slide_content_type(result: SlideRenderResult) -> str:
+    if _slide_artifact_kind(result) == "image":
+        return "image/png"
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+async def _upload_file_to_object_storage(
+    local_path: str,
+    object_key: str,
+    content_type: str,
+) -> StoredObject:
+    loop = asyncio.get_running_loop()
+    storage = get_object_storage()
+    return await loop.run_in_executor(
+        None,
+        lambda: storage.upload_file(local_path, object_key, content_type),
+    )
+
+
+async def _upload_presentation_async(local_path: str, session_id: str) -> StoredObject:
+    return await _upload_file_to_object_storage(
+        local_path,
+        _build_object_key(session_id, "presentations", f"presentation_{session_id}.pptx"),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+
+async def _persist_slide_outputs(
+    results: list[SlideRenderResult],
+    session_id: str,
+    total_slides: int,
+) -> tuple[list[dict], list[dict]]:
+    slide_files: list[dict] = []
+    progress_events: list[dict] = []
+
+    for result in sorted(results, key=lambda item: item.slide_index):
+        thumbnail_url: Optional[str] = None
+
+        if result.success and result.output_path:
+            artifact_filename = f"slide_{result.slide_index + 1:03d}{Path(result.output_path).suffix}"
+            stored_artifact = await _upload_file_to_object_storage(
+                result.output_path,
+                _build_object_key(session_id, "slides", artifact_filename),
+                _slide_content_type(result),
+            )
+            slide_file = {
+                "page_number": result.slide_index + 1,
+                "path": stored_artifact.url,
+                "storage_key": stored_artifact.key,
+                "type": _slide_artifact_kind(result),
+            }
+
+            if result.render_path == "path_b":
+                thumbnail_path = await _generate_thumbnail_async(
+                    result.output_path,
+                    session_id,
+                    result.slide_index,
+                )
+                if thumbnail_path:
+                    stored_thumbnail = await _upload_file_to_object_storage(
+                        thumbnail_path,
+                        _build_object_key(
+                            session_id,
+                            "thumbnails",
+                            f"thumb_{result.slide_index + 1:03d}.jpg",
+                        ),
+                        "image/jpeg",
+                    )
+                    thumbnail_url = stored_thumbnail.url
+                    slide_file["thumbnail_storage_key"] = stored_thumbnail.key
+                    slide_file["thumbnail_url"] = stored_thumbnail.url
+
+            slide_files.append(slide_file)
+
+        progress_events.append(
+            _make_render_progress_event(
+                slide_number=result.slide_index + 1,
+                total_slides=total_slides,
+                render_path=result.render_path,
+                status="complete" if result.success else "failed",
+                thumbnail_url=thumbnail_url,
+                error=result.error,
+            )
+        )
+
+    return slide_files, progress_events
