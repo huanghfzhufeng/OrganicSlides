@@ -1,5 +1,6 @@
 """Unit tests for queued generation orchestration and worker consumption."""
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -12,6 +13,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 import event_stream
+import job_queue
 import main
 import worker_app
 import worker_runtime
@@ -144,6 +146,52 @@ class TestApiQueueProxy:
         assert exc.value.status_code == 404
         assert exc.value.detail == "Session not found"
 
+    @pytest.mark.asyncio
+    async def test_trigger_already_satisfied_detects_completed_resume_state(self):
+        state = {
+            "current_status": "render_complete",
+            "pptx_path": "/tmp/demo.pptx",
+        }
+
+        assert job_queue.trigger_already_satisfied(state, "resume_workflow") is True
+        assert job_queue.trigger_already_satisfied(state, "start_workflow") is False
+
+    @pytest.mark.asyncio
+    async def test_enqueue_generation_job_reuses_completed_resume_job(self, monkeypatch):
+        active_job = AsyncMock(return_value=None)
+        load_state = AsyncMock(
+            return_value={
+                "session_id": "session-9",
+                "current_status": "render_complete",
+                "pptx_path": "/tmp/demo.pptx",
+            }
+        )
+        latest_job = AsyncMock(
+            return_value={
+                "job_id": "job-complete",
+                "status": "completed",
+                "trigger": "resume_workflow",
+            }
+        )
+        create_job = AsyncMock()
+        record_event = AsyncMock()
+
+        monkeypatch.setattr(job_queue, "find_active_generation_job", active_job)
+        monkeypatch.setattr(job_queue, "load_workflow_state", load_state)
+        monkeypatch.setattr(job_queue, "find_latest_generation_job", latest_job)
+        monkeypatch.setattr(job_queue, "create_generation_job", create_job)
+        monkeypatch.setattr(job_queue, "record_job_event", record_event)
+
+        result = await job_queue.enqueue_generation_job("session-9", "resume_workflow")
+
+        assert result == {
+            "job_id": "job-complete",
+            "status": "completed",
+            "trigger": "resume_workflow",
+        }
+        create_job.assert_not_awaited()
+        record_event.assert_not_awaited()
+
 
 @pytest.mark.unit
 class TestQueueConsumerAndWorkerRuntime:
@@ -207,6 +255,7 @@ class TestQueueConsumerAndWorkerRuntime:
         monkeypatch.setattr(worker_runtime, "create_project_revision", create_revision)
         monkeypatch.setattr(worker_runtime, "_merge_session_state", merge_state)
         monkeypatch.setattr(worker_runtime, "_load_session_state", load_state)
+        monkeypatch.setattr(worker_runtime, "_job_heartbeat", AsyncMock(return_value=None))
         monkeypatch.setattr(worker_runtime.asyncio, "sleep", AsyncMock(return_value=None))
 
         await worker_runtime.execute_generation_job("session-1", "job-1", "start_workflow")
@@ -254,6 +303,7 @@ class TestQueueConsumerAndWorkerRuntime:
         monkeypatch.setattr(worker_runtime, "_save_session_state", save_state)
         monkeypatch.setattr(worker_runtime, "_merge_session_state", merge_state)
         monkeypatch.setattr(worker_runtime, "_load_session_state", load_state)
+        monkeypatch.setattr(worker_runtime, "_job_heartbeat", AsyncMock(return_value=None))
         monkeypatch.setattr(worker_runtime.asyncio, "sleep", AsyncMock(return_value=None))
 
         await worker_runtime.execute_generation_job("session-2", "job-2", "resume_workflow")
@@ -303,6 +353,7 @@ class TestQueueConsumerAndWorkerRuntime:
         monkeypatch.setattr(worker_runtime, "_save_session_state", save_state)
         monkeypatch.setattr(worker_runtime, "_merge_session_state", merge_state)
         monkeypatch.setattr(worker_runtime, "_load_session_state", load_state)
+        monkeypatch.setattr(worker_runtime, "_job_heartbeat", AsyncMock(return_value=None))
         monkeypatch.setattr(worker_runtime.asyncio, "sleep", AsyncMock(return_value=None))
 
         await worker_runtime.execute_generation_job("session-3", "job-3", "resume_workflow")
@@ -319,6 +370,24 @@ class TestQueueConsumerAndWorkerRuntime:
             "generation_failed",
             final_state,
         )
+
+    @pytest.mark.asyncio
+    async def test_job_heartbeat_updates_running_jobs(self, monkeypatch):
+        update_job = AsyncMock()
+        sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
+        stop_event = worker_runtime.asyncio.Event()
+
+        monkeypatch.setattr(worker_runtime, "update_generation_job", update_job)
+        monkeypatch.setattr(worker_runtime.asyncio, "sleep", sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            await worker_runtime._job_heartbeat(
+                "job-heartbeat",
+                {"status": "running"},
+                stop_event,
+            )
+
+        update_job.assert_awaited_once_with("job-heartbeat", status="running")
 
 
 @pytest.mark.unit
@@ -394,3 +463,40 @@ class TestWorkerServiceAndEventStream:
 
         assert [payload["type"] for payload in payloads] == ["status", "complete"]
         assert payloads[-1]["pptx_path"] == "/tmp/demo.pptx"
+
+    @pytest.mark.asyncio
+    async def test_stream_job_events_stops_on_hitl_terminal_status(self, monkeypatch):
+        list_events = AsyncMock(
+            return_value=[
+                {
+                    "event_id": "event-hitl",
+                    "event_type": "hitl",
+                    "payload": {
+                        "type": "hitl",
+                        "status": "waiting_for_approval",
+                        "outline": [{"id": "1", "title": "Test assertion"}],
+                    },
+                }
+            ]
+        )
+        get_job = AsyncMock(
+            return_value={
+                "job_id": "job-hitl",
+                "status": "waiting_for_outline_approval",
+                "pptx_path": "",
+            }
+        )
+
+        monkeypatch.setattr(event_stream, "list_job_events", list_events)
+        monkeypatch.setattr(event_stream, "get_generation_job", get_job)
+
+        chunks = [chunk async for chunk in event_stream.stream_job_events("job-hitl")]
+        payloads = _decode_sse_payloads(chunks)
+
+        assert payloads == [
+            {
+                "type": "hitl",
+                "status": "waiting_for_approval",
+                "outline": [{"id": "1", "title": "Test assertion"}],
+            }
+        ]

@@ -8,7 +8,7 @@ import json
 from database.project_tracking_store import get_generation_job, list_job_events
 
 
-_TERMINAL_JOB_STATUSES = {"completed", "error"}
+_TERMINAL_JOB_STATUSES = {"completed", "error", "waiting_for_outline_approval"}
 
 
 async def stream_job_events(job_id: str):
@@ -44,6 +44,11 @@ async def stream_job_events(job_id: str):
 
 
 def _fallback_terminal_payload(job: dict) -> dict:
+    if job["status"] == "waiting_for_outline_approval":
+        return {
+            "type": "hitl",
+            "status": "waiting_for_approval",
+        }
     if job["status"] == "error":
         return {
             "type": "error",
