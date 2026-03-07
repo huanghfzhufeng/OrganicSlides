@@ -5,7 +5,7 @@
 import json
 from typing import List, Dict, Any, Optional
 
-from rendering_policy import effective_render_paths, enforce_render_path_preference
+from rendering_policy import effective_render_paths, enforce_render_path_preference, get_render_path_preference
 
 
 def create_slides_summary_for_visual(slides_data: List[Dict]) -> str:
@@ -31,6 +31,72 @@ def create_slides_summary_for_visual(slides_data: List[Dict]) -> str:
         })
 
     return json.dumps(summaries, ensure_ascii=False, indent=2)
+
+
+def build_style_context(style_config: Dict[str, Any]) -> str:
+    """Build a high-signal StylePacket summary for the Visual agent."""
+    if not style_config:
+        return "未指定风格"
+
+    name = (
+        style_config.get("name_zh")
+        or style_config.get("name_en")
+        or style_config.get("style_id")
+        or style_config.get("id")
+        or "默认风格"
+    )
+    render_paths = effective_render_paths(style_config)
+    render_preference = get_render_path_preference(style_config)
+    prompt_constraints = style_config.get("prompt_constraints", {})
+
+    lines = [
+        f"当前风格：{name}",
+        f"支持渲染路径：{', '.join(render_paths)}",
+    ]
+    if render_preference != "auto":
+        lines.append(f"强制渲染偏好：{render_preference}")
+
+    for key, label in [
+        ("description", "风格描述"),
+        ("reference_summary", "风格参考摘要"),
+        ("movement_excerpt", "设计运动摘录"),
+    ]:
+        block = _format_optional_block(label, style_config.get(key, ""))
+        if block:
+            lines.append(block)
+
+    design_principles_summary = _summarize_design_principles(
+        style_config.get("design_principles_excerpt", "")
+    )
+    if design_principles_summary:
+        lines.append(f"设计原则重点：{design_principles_summary}")
+
+    if style_config.get("base_style_prompt"):
+        lines.append(
+            _format_optional_block("Base Style Prompt", style_config.get("base_style_prompt", ""))
+        )
+
+    required_sections = prompt_constraints.get("path_b_required_sections", [])
+    if required_sections:
+        lines.append(f"Path B 必填段落：{', '.join(required_sections)}")
+
+    forbidden_terms = prompt_constraints.get("path_b_forbidden_terms", [])
+    if forbidden_terms:
+        lines.append(f"Path B 禁用词：{', '.join(forbidden_terms)}")
+
+    path_a_rules = prompt_constraints.get("path_a_rules", [])
+    if path_a_rules:
+        lines.append(f"Path A 硬规则：{'; '.join(path_a_rules[:4])}")
+
+    sample_asset_path = style_config.get("sample_asset_path", "")
+    if sample_asset_path:
+        lines.append(f"样例素材路径：{sample_asset_path}")
+
+    reference_sources = style_config.get("reference_sources", [])
+    if reference_sources:
+        lines.append(f"参考来源：{', '.join(reference_sources[:4])}")
+
+    return "\n".join(line for line in lines if line)
 
 
 def determine_render_path(slide: Dict, style_config: Dict) -> str:
@@ -70,6 +136,64 @@ def determine_render_path(slide: Dict, style_config: Dict) -> str:
         return "path_a"
 
     return "path_a"  # Safe default
+
+
+def validate_visual_constraints(
+    plans: List[Dict[str, Any]],
+    slides_data: List[Dict[str, Any]],
+    style_config: Dict[str, Any],
+) -> tuple[bool, str]:
+    """Validate render plans against StylePacket-supported paths and Path B prompt rules."""
+    supported_render_paths = effective_render_paths(style_config)
+    prompt_constraints = style_config.get("prompt_constraints", {})
+    forbidden_terms = prompt_constraints.get("path_b_forbidden_terms", [])
+    required_sections = prompt_constraints.get("path_b_required_sections", [])
+
+    for index, plan in enumerate(plans):
+        render_path = plan.get("render_path")
+        if render_path not in supported_render_paths:
+            return (
+                False,
+                f"plan {index + 1} uses unsupported render_path '{render_path}' "
+                f"for current style ({', '.join(supported_render_paths)})",
+            )
+
+        if render_path != "path_b":
+            continue
+
+        image_prompt = str(plan.get("image_prompt") or "")
+        if not image_prompt:
+            continue
+
+        missing_sections = _missing_required_sections(image_prompt, required_sections)
+        if missing_sections:
+            return (
+                False,
+                f"plan {index + 1} image_prompt missing required sections: "
+                f"{', '.join(missing_sections)}",
+            )
+
+        matched_terms = _matched_forbidden_terms(image_prompt, forbidden_terms)
+        if matched_terms:
+            return (
+                False,
+                f"plan {index + 1} image_prompt contains forbidden terms: "
+                f"{', '.join(matched_terms)}",
+            )
+
+        slide = slides_data[index] if index < len(slides_data) else {}
+        expected_title = (
+            slide.get("text_to_render", {}).get("title")
+            or slide.get("title")
+            or ""
+        ).strip()
+        if expected_title and expected_title not in image_prompt:
+            return (
+                False,
+                f"plan {index + 1} image_prompt must include text_to_render title '{expected_title}'",
+            )
+
+    return True, "验证通过"
 
 
 def build_default_image_prompt(slide: Dict, style_config: Dict) -> str:
@@ -181,3 +305,63 @@ def create_slides_summary(slides_data: List[Dict]) -> List[Dict]:
         }
         for slide in slides_data
     ]
+
+
+def _format_optional_block(title: str, content: str, max_chars: int = 700) -> str:
+    compact = " ".join(str(content).split())
+    if not compact:
+        return ""
+    if len(compact) > max_chars:
+        compact = compact[:max_chars].rstrip() + "..."
+    return f"{title}：{compact}"
+
+
+def _summarize_design_principles(content: str) -> str:
+    compact = " ".join(str(content).split())
+    if not compact:
+        return ""
+
+    highlights = []
+    for phrase in [
+        "Assertion-Evidence Framework",
+        "Information Density",
+        "Title = assertion",
+        "One idea per slide",
+    ]:
+        if phrase in compact:
+            highlights.append(phrase)
+
+    if highlights:
+        return "; ".join(highlights)
+
+    if len(compact) > 240:
+        return compact[:240].rstrip() + "..."
+    return compact
+
+
+def _missing_required_sections(image_prompt: str, required_sections: List[str]) -> List[str]:
+    prompt_lower = image_prompt.lower()
+    missing = []
+    for section in required_sections:
+        variants = _required_section_variants(section)
+        if not any(variant in prompt_lower for variant in variants):
+            missing.append(section)
+    return missing
+
+
+def _required_section_variants(section: str) -> List[str]:
+    normalized = section.replace("_", " ").lower()
+    variants = [normalized]
+    aliases = {
+        "visual_reference": ["visual reference"],
+        "base_style": ["base style"],
+        "design_intent": ["design intent"],
+        "text_to_render": ["text to render"],
+        "visual_narrative": ["visual narrative"],
+    }
+    variants.extend(aliases.get(section, []))
+    return list(dict.fromkeys(variants))
+
+
+def _matched_forbidden_terms(image_prompt: str, forbidden_terms: List[str]) -> List[str]:
+    return sorted({term for term in forbidden_terms if term and term in image_prompt})
