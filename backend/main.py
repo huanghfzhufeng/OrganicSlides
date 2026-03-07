@@ -3,14 +3,11 @@ MAS-PPT 多智能体演示文稿生成系统
 FastAPI 后端服务 - 集成数据库和认证
 """
 
-import asyncio
-import logging
 import uuid
-import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -18,18 +15,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
+from app_lifecycle import build_lifespan
 from state import PresentationState, create_initial_state
-from graph import get_main_app, get_resume_app
-from database.postgres import get_db, init_db, close_db
-from database.redis_client import redis_client
+from database.postgres import get_db
 from database.models import User, Project
 from database.project_tracking_store import (
-    create_generation_job,
     create_project_revision,
-    record_job_event,
     sync_project_state,
-    update_generation_job,
 )
 from database.workflow_state_store import (
     load_workflow_state,
@@ -38,22 +30,11 @@ from database.workflow_state_store import (
 )
 from auth import auth_router, get_current_user, get_current_active_user
 from auth.service import AuthService
+from event_stream import stream_job_events
 from runtime_schemas import build_style_packet, serialize_models
 from styles.registry import get_registry
 from styles.recommender import StyleRecommender
-
-logger = logging.getLogger(__name__)
-
-
-def _workflow_failed(state: Optional[dict]) -> bool:
-    if not state:
-        return False
-
-    status = state.get("current_status", "")
-    if state.get("error"):
-        return True
-    return status == "error" or status.endswith("_error") or status.endswith("_failed")
-
+from worker_client import dispatch_worker_job
 
 async def _load_session_state(session_id: str) -> Optional[dict]:
     """Load workflow state from durable PostgreSQL storage only."""
@@ -81,52 +62,11 @@ async def _merge_session_state(session_id: str, updates: dict) -> Optional[dict]
     return persisted
 
 
-async def _connect_optional_redis() -> bool:
-    """Connect Redis if available without making startup depend on it."""
-    try:
-        await redis_client.connect()
-        logger.info("Redis connection established")
-        return True
-    except Exception:
-        logger.warning("Redis unavailable; continuing without it", exc_info=True)
-        return False
-
-
-async def _disconnect_optional_redis() -> None:
-    """Disconnect Redis if it was available during runtime."""
-    try:
-        await redis_client.disconnect()
-    except Exception:
-        logger.warning("Redis disconnect failed during shutdown", exc_info=True)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
-    print("🚀 MAS-PPT 系统启动中...")
-    
-    # 初始化数据库
-    await init_db()
-    print("✅ PostgreSQL 数据库初始化完成")
-
-    if await _connect_optional_redis():
-        print("✅ Redis 连接成功")
-    else:
-        print("⚠️ Redis 不可用，系统以 PostgreSQL-only 模式运行")
-    
-    yield
-    
-    # 关闭连接
-    await _disconnect_optional_redis()
-    await close_db()
-    print("👋 MAS-PPT 系统关闭")
-
-
 app = FastAPI(
     title="MAS-PPT API",
     description="多智能体协同演示文稿生成系统",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=build_lifespan("MAS-PPT API"),
 )
 
 # 配置 CORS
@@ -229,172 +169,32 @@ async def _authorize_project_access(
 
 # ==================== SSE 流式响应 ====================
 
-async def generate_sse_events(session_id: str, state: PresentationState):
-    """生成 SSE 事件流"""
-    main_app = get_main_app()
-    job = await create_generation_job(session_id, "start_workflow", dict(state))
-    job_id = job["job_id"]
-    
-    config = {"configurable": {"thread_id": session_id}}
-    
-    try:
-        async for event in main_app.astream(state, config):
-            for node_name, node_output in event.items():
-                if node_name == "__end__":
-                    continue
-                    
-                status = node_output.get("current_status", "processing")
-                agent = node_output.get("current_agent", node_name)
-                messages = node_output.get("messages", [])
-                
-                data = {
-                    "type": "status",
-                    "agent": agent,
-                    "status": status,
-                    "message": messages[-1]["content"] if messages else ""
-                }
-                persisted_state = await _merge_session_state(session_id, node_output) or dict(state)
-                await update_generation_job(job_id, state=persisted_state, status=status)
-                await record_job_event(session_id, data["type"], data, job_id=job_id)
-                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                
-                await asyncio.sleep(0.1)
-        
-        # 获取最终状态
-        final_state = await _load_session_state(session_id) or {}
-        
-        if _workflow_failed(final_state):
-            error_message = final_state.get("error", "Workflow failed")
-            error_data = {"type": "error", "status": "error", "message": error_message}
-            await update_generation_job(
-                job_id,
-                state=final_state,
-                status="error",
-                error_message=error_message,
-            )
-            await record_job_event(session_id, error_data["type"], error_data, job_id=job_id)
-            await create_project_revision(session_id, "generation_failed", final_state)
-            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-        elif final_state.get("current_status") == "waiting_for_outline_approval":
-            hitl_data = {
-                "type": "hitl",
-                "status": "waiting_for_approval",
-                "outline": final_state.get("outline", []),
-            }
-            await update_generation_job(
-                job_id,
-                state=final_state,
-                status="waiting_for_outline_approval",
-            )
-            await record_job_event(session_id, hitl_data["type"], hitl_data, job_id=job_id)
-            await create_project_revision(session_id, "outline_generated", final_state)
-            yield f"data: {json.dumps(hitl_data, ensure_ascii=False)}\n\n"
-        else:
-            complete_data = {"type": "complete", "status": "done"}
-            await update_generation_job(job_id, state=final_state, status="completed")
-            await record_job_event(session_id, complete_data["type"], complete_data, job_id=job_id)
-            await create_project_revision(session_id, "generation_completed", final_state)
-            yield f"data: {json.dumps(complete_data, ensure_ascii=False)}\n\n"
-            
-    except Exception as e:
-        current_state = await _load_session_state(session_id) or dict(state)
-        error_data = {"type": "error", "status": "error", "message": str(e)}
-        await update_generation_job(
-            job_id,
-            state=current_state,
-            status="error",
-            error_message=str(e),
-        )
-        await record_job_event(session_id, error_data["type"], error_data, job_id=job_id)
-        await create_project_revision(session_id, "generation_failed", current_state)
-        yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+async def generate_sse_events(session_id: str, _state: PresentationState):
+    """Proxy persisted worker job events as SSE."""
+    job = await _dispatch_worker_job(session_id, "start_workflow")
+    async for chunk in stream_job_events(job["job_id"]):
+        yield chunk
 
 
 async def generate_resume_sse_events(session_id: str):
-    """生成恢复阶段的 SSE 事件流"""
-    resume_app = get_resume_app()
-    state = await _load_session_state(session_id)
+    """Proxy persisted worker job events for resumed workflows as SSE."""
+    job = await _dispatch_worker_job(session_id, "resume_workflow")
+    async for chunk in stream_job_events(job["job_id"]):
+        yield chunk
 
-    if not state:
-        yield f"data: {json.dumps({'type': 'error', 'message': 'Session not found'}, ensure_ascii=False)}\n\n"
-        return
 
-    state["outline_approved"] = True
-    await _save_session_state(session_id, state)
-    job = await create_generation_job(session_id, "resume_workflow", dict(state))
-    job_id = job["job_id"]
-
-    config = {"configurable": {"thread_id": f"{session_id}_resume"}}
-
+async def _dispatch_worker_job(session_id: str, trigger: str) -> dict:
     try:
-        async for event in resume_app.astream(dict(state), config):
-            for node_name, node_output in event.items():
-                if node_name == "__end__":
-                    continue
-
-                status = node_output.get("current_status", "processing")
-                agent = node_output.get("current_agent", node_name)
-                messages = node_output.get("messages", [])
-
-                # Emit the standard status event
-                data = {
-                    "type": "status",
-                    "agent": agent,
-                    "status": status,
-                    "message": messages[-1]["content"] if messages else ""
-                }
-                persisted_state = await _merge_session_state(session_id, node_output) or dict(state)
-                await update_generation_job(job_id, state=persisted_state, status=status)
-                await record_job_event(session_id, data["type"], data, job_id=job_id)
-                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-                # Emit individual render_progress events if the renderer produced them
-                render_progress_events: list[dict] = node_output.get(
-                    "render_progress_events", []
-                )
-                for rpe in render_progress_events:
-                    await record_job_event(session_id, rpe.get("type", "render_progress"), rpe, job_id=job_id)
-                    yield f"data: {json.dumps(rpe, ensure_ascii=False)}\n\n"
-
-                await asyncio.sleep(0.1)
-
-        final_state = await _load_session_state(session_id) or {}
-        pptx_path = final_state.get("pptx_path", "")
-        if _workflow_failed(final_state):
-            error_message = final_state.get("error", "Workflow failed")
-            error_data = {"type": "error", "status": "error", "message": error_message}
-            await update_generation_job(
-                job_id,
-                state=final_state,
-                status="error",
-                error_message=error_message,
-            )
-            await record_job_event(session_id, error_data["type"], error_data, job_id=job_id)
-            await create_project_revision(session_id, "generation_failed", final_state)
-            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-        else:
-            complete_data = {
-                "type": "complete",
-                "status": "done",
-                "pptx_path": pptx_path,
-            }
-            await update_generation_job(job_id, state=final_state, status="completed")
-            await record_job_event(session_id, complete_data["type"], complete_data, job_id=job_id)
-            await create_project_revision(session_id, "generation_completed", final_state)
-            yield f"data: {json.dumps(complete_data, ensure_ascii=False)}\n\n"
-
-    except Exception as e:
-        current_state = await _load_session_state(session_id) or dict(state)
-        error_data = {"type": "error", "status": "error", "message": str(e)}
-        await update_generation_job(
-            job_id,
-            state=current_state,
-            status="error",
-            error_message=str(e),
+        return await dispatch_worker_job(session_id, trigger)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Worker request failed with status {exc.response.status_code}",
         )
-        await record_job_event(session_id, error_data["type"], error_data, job_id=job_id)
-        await create_project_revision(session_id, "generation_failed", current_state)
-        yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail=f"Worker unavailable: {exc}") from exc
 
 
 # ==================== API 端点 ====================
@@ -402,7 +202,7 @@ async def generate_resume_sse_events(session_id: str):
 @app.get("/")
 async def root():
     """健康检查"""
-    return {"message": "MAS-PPT API is running", "version": "1.0.0"}
+    return {"message": "MAS-PPT API is running", "version": "1.0.0", "service": "api"}
 
 
 # ==================== 风格 API ====================

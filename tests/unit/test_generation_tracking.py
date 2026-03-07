@@ -1,16 +1,21 @@
-"""Unit tests for generation job and event tracking orchestration."""
+"""Unit tests for API/worker orchestration and persisted event streaming."""
 
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from fastapi import HTTPException
 
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
+import event_stream
 import main
+import worker_app
+import worker_runtime
 
 
 def _decode_sse_payloads(chunks):
@@ -84,15 +89,121 @@ class FakeErrorResumeApp:
 
 
 @pytest.mark.unit
-class TestGenerationTracking:
+class TestApiWorkerProxy:
     @pytest.mark.asyncio
-    async def test_generate_sse_events_tracks_job_events_and_outline_revision(self, monkeypatch):
+    async def test_generate_sse_events_dispatches_to_worker_and_streams_events(self, monkeypatch):
+        dispatch = AsyncMock(return_value={"job_id": "job-1"})
+
+        async def fake_stream(job_id):
+            assert job_id == "job-1"
+            yield "data: {\"type\":\"status\",\"status\":\"queued\"}\n\n"
+            yield "data: {\"type\":\"hitl\",\"status\":\"waiting_for_approval\"}\n\n"
+
+        monkeypatch.setattr(main, "_dispatch_worker_job", dispatch)
+        monkeypatch.setattr(main, "stream_job_events", fake_stream)
+
+        chunks = [
+            chunk
+            async for chunk in main.generate_sse_events(
+                "session-1",
+                {"session_id": "session-1"},
+            )
+        ]
+        payloads = _decode_sse_payloads(chunks)
+
+        assert [payload["type"] for payload in payloads] == ["status", "hitl"]
+        dispatch.assert_awaited_once_with("session-1", "start_workflow")
+
+    @pytest.mark.asyncio
+    async def test_generate_resume_sse_events_dispatches_to_worker_and_streams_events(self, monkeypatch):
+        dispatch = AsyncMock(return_value={"job_id": "job-2"})
+
+        async def fake_stream(job_id):
+            assert job_id == "job-2"
+            yield "data: {\"type\":\"status\",\"status\":\"running\"}\n\n"
+            yield "data: {\"type\":\"complete\",\"status\":\"done\"}\n\n"
+
+        monkeypatch.setattr(main, "_dispatch_worker_job", dispatch)
+        monkeypatch.setattr(main, "stream_job_events", fake_stream)
+
+        chunks = [chunk async for chunk in main.generate_resume_sse_events("session-2")]
+        payloads = _decode_sse_payloads(chunks)
+
+        assert [payload["type"] for payload in payloads] == ["status", "complete"]
+        dispatch.assert_awaited_once_with("session-2", "resume_workflow")
+
+    @pytest.mark.asyncio
+    async def test_dispatch_worker_job_maps_404_to_http_exception(self, monkeypatch):
+        request = httpx.Request("POST", "http://worker/internal/jobs/start")
+        response = httpx.Response(404, request=request)
+        dispatch = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "missing",
+                request=request,
+                response=response,
+            )
+        )
+        monkeypatch.setattr(main, "dispatch_worker_job", dispatch)
+
+        with pytest.raises(HTTPException) as exc:
+            await main._dispatch_worker_job("session-404", "start_workflow")
+
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Session not found"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_worker_job_maps_transport_error_to_503(self, monkeypatch):
+        request = httpx.Request("POST", "http://worker/internal/jobs/start")
+        dispatch = AsyncMock(
+            side_effect=httpx.ConnectError("worker down", request=request)
+        )
+        monkeypatch.setattr(main, "dispatch_worker_job", dispatch)
+
+        with pytest.raises(HTTPException) as exc:
+            await main._dispatch_worker_job("session-503", "start_workflow")
+
+        assert exc.value.status_code == 503
+        assert "Worker unavailable" in exc.value.detail
+
+
+@pytest.mark.unit
+class TestWorkerRuntime:
+    @pytest.mark.asyncio
+    async def test_start_worker_job_reuses_active_job(self, monkeypatch):
+        monkeypatch.setattr(
+            worker_runtime,
+            "find_active_generation_job",
+            AsyncMock(
+                return_value={
+                    "job_id": "job-1",
+                    "status": "running",
+                    "trigger": "start_workflow",
+                }
+            ),
+        )
+
+        result = await worker_runtime.start_worker_job("session-1", "start_workflow")
+
+        assert result == {
+            "job_id": "job-1",
+            "status": "already_running",
+            "trigger": "start_workflow",
+        }
+
+    @pytest.mark.asyncio
+    async def test_execute_generation_job_tracks_outline_revision(self, monkeypatch):
         initial_state = {
             "session_id": "session-1",
             "current_status": "initialized",
             "current_agent": "",
             "outline": [],
             "messages": [],
+        }
+        planner_state = {
+            **initial_state,
+            "current_status": "planning",
+            "current_agent": "planner",
+            "outline": [{"id": "1", "title": "Test assertion"}],
         }
         final_state = {
             "session_id": "session-1",
@@ -101,44 +212,37 @@ class TestGenerationTracking:
             "outline": [{"id": "1", "title": "Test assertion"}],
         }
 
-        create_job = AsyncMock(return_value={"job_id": "job-1"})
         update_job = AsyncMock()
         record_event = AsyncMock()
         create_revision = AsyncMock()
-        merge_state = AsyncMock(side_effect=[
-            {
-                **initial_state,
-                "current_status": "planning",
-                "current_agent": "planner",
-                "outline": [{"id": "1", "title": "Test assertion"}],
-            },
-            final_state,
-        ])
-        load_state = AsyncMock(return_value=final_state)
+        merge_state = AsyncMock(side_effect=[planner_state, final_state])
+        load_state = AsyncMock(side_effect=[dict(initial_state), final_state])
 
-        monkeypatch.setattr(main, "get_main_app", lambda: FakeMainApp())
-        monkeypatch.setattr(main, "create_generation_job", create_job)
-        monkeypatch.setattr(main, "update_generation_job", update_job)
-        monkeypatch.setattr(main, "record_job_event", record_event)
-        monkeypatch.setattr(main, "create_project_revision", create_revision)
-        monkeypatch.setattr(main, "_merge_session_state", merge_state)
-        monkeypatch.setattr(main, "_load_session_state", load_state)
+        monkeypatch.setattr(worker_runtime, "get_main_app", lambda: FakeMainApp())
+        monkeypatch.setattr(worker_runtime, "update_generation_job", update_job)
+        monkeypatch.setattr(worker_runtime, "record_job_event", record_event)
+        monkeypatch.setattr(worker_runtime, "create_project_revision", create_revision)
+        monkeypatch.setattr(worker_runtime, "_merge_session_state", merge_state)
+        monkeypatch.setattr(worker_runtime, "_load_session_state", load_state)
+        monkeypatch.setattr(worker_runtime.asyncio, "sleep", AsyncMock())
 
-        chunks = [chunk async for chunk in main.generate_sse_events("session-1", initial_state)]
-        payloads = _decode_sse_payloads(chunks)
+        await worker_runtime.execute_generation_job("session-1", "job-1", "start_workflow")
 
-        assert [payload["type"] for payload in payloads] == ["status", "status", "hitl"]
-        create_job.assert_awaited_once_with("session-1", "start_workflow", dict(initial_state))
         assert record_event.await_count == 3
+        update_job.assert_any_await("job-1", state=dict(initial_state), status="running")
         update_job.assert_any_await(
             "job-1",
             state=final_state,
             status="waiting_for_outline_approval",
         )
-        create_revision.assert_awaited_once_with("session-1", "outline_generated", final_state)
+        create_revision.assert_awaited_once_with(
+            "session-1",
+            "outline_generated",
+            final_state,
+        )
 
     @pytest.mark.asyncio
-    async def test_generate_resume_sse_events_tracks_completion_and_render_events(self, monkeypatch):
+    async def test_execute_resume_generation_tracks_completion_and_render_events(self, monkeypatch):
         initial_state = {
             "session_id": "session-2",
             "current_status": "waiting_for_outline_approval",
@@ -153,7 +257,6 @@ class TestGenerationTracking:
             "pptx_path": "/tmp/demo.pptx",
         }
 
-        create_job = AsyncMock(return_value={"job_id": "job-2"})
         update_job = AsyncMock()
         record_event = AsyncMock()
         create_revision = AsyncMock()
@@ -161,37 +264,40 @@ class TestGenerationTracking:
         merge_state = AsyncMock(return_value=final_state)
         load_state = AsyncMock(side_effect=[dict(initial_state), final_state])
 
-        monkeypatch.setattr(main, "get_resume_app", lambda: FakeResumeApp())
-        monkeypatch.setattr(main, "create_generation_job", create_job)
-        monkeypatch.setattr(main, "update_generation_job", update_job)
-        monkeypatch.setattr(main, "record_job_event", record_event)
-        monkeypatch.setattr(main, "create_project_revision", create_revision)
-        monkeypatch.setattr(main, "_save_session_state", save_state)
-        monkeypatch.setattr(main, "_merge_session_state", merge_state)
-        monkeypatch.setattr(main, "_load_session_state", load_state)
+        monkeypatch.setattr(worker_runtime, "get_resume_app", lambda: FakeResumeApp())
+        monkeypatch.setattr(worker_runtime, "update_generation_job", update_job)
+        monkeypatch.setattr(worker_runtime, "record_job_event", record_event)
+        monkeypatch.setattr(worker_runtime, "create_project_revision", create_revision)
+        monkeypatch.setattr(worker_runtime, "_save_session_state", save_state)
+        monkeypatch.setattr(worker_runtime, "_merge_session_state", merge_state)
+        monkeypatch.setattr(worker_runtime, "_load_session_state", load_state)
+        monkeypatch.setattr(worker_runtime.asyncio, "sleep", AsyncMock())
 
-        chunks = [chunk async for chunk in main.generate_resume_sse_events("session-2")]
-        payloads = _decode_sse_payloads(chunks)
+        await worker_runtime.execute_generation_job("session-2", "job-2", "resume_workflow")
 
-        assert [payload["type"] for payload in payloads] == [
-            "status",
-            "render_progress",
-            "complete",
-        ]
         assert save_state.await_args.args[1]["outline_approved"] is True
-        create_job.assert_awaited_once()
         assert record_event.await_count == 3
         update_job.assert_any_await("job-2", state=final_state, status="completed")
-        create_revision.assert_awaited_once_with("session-2", "generation_completed", final_state)
+        create_revision.assert_awaited_once_with(
+            "session-2",
+            "generation_completed",
+            final_state,
+        )
 
     @pytest.mark.asyncio
-    async def test_generate_resume_sse_events_emits_error_when_workflow_finishes_failed(self, monkeypatch):
+    async def test_execute_resume_generation_tracks_error_state(self, monkeypatch):
         initial_state = {
             "session_id": "session-3",
             "current_status": "waiting_for_outline_approval",
             "current_agent": "hitl",
             "outline_approved": False,
             "messages": [],
+        }
+        writer_error_state = {
+            "session_id": "session-3",
+            "current_status": "writer_error",
+            "current_agent": "writer",
+            "error": "writer parse failed",
         }
         final_state = {
             "session_id": "session-3",
@@ -200,31 +306,108 @@ class TestGenerationTracking:
             "error": "writer parse failed",
         }
 
-        create_job = AsyncMock(return_value={"job_id": "job-3"})
         update_job = AsyncMock()
         record_event = AsyncMock()
         create_revision = AsyncMock()
         save_state = AsyncMock()
-        merge_state = AsyncMock(side_effect=[final_state, final_state])
+        merge_state = AsyncMock(side_effect=[writer_error_state, final_state])
         load_state = AsyncMock(side_effect=[dict(initial_state), final_state])
 
-        monkeypatch.setattr(main, "get_resume_app", lambda: FakeErrorResumeApp())
-        monkeypatch.setattr(main, "create_generation_job", create_job)
-        monkeypatch.setattr(main, "update_generation_job", update_job)
-        monkeypatch.setattr(main, "record_job_event", record_event)
-        monkeypatch.setattr(main, "create_project_revision", create_revision)
-        monkeypatch.setattr(main, "_save_session_state", save_state)
-        monkeypatch.setattr(main, "_merge_session_state", merge_state)
-        monkeypatch.setattr(main, "_load_session_state", load_state)
+        monkeypatch.setattr(worker_runtime, "get_resume_app", lambda: FakeErrorResumeApp())
+        monkeypatch.setattr(worker_runtime, "update_generation_job", update_job)
+        monkeypatch.setattr(worker_runtime, "record_job_event", record_event)
+        monkeypatch.setattr(worker_runtime, "create_project_revision", create_revision)
+        monkeypatch.setattr(worker_runtime, "_save_session_state", save_state)
+        monkeypatch.setattr(worker_runtime, "_merge_session_state", merge_state)
+        monkeypatch.setattr(worker_runtime, "_load_session_state", load_state)
+        monkeypatch.setattr(worker_runtime.asyncio, "sleep", AsyncMock())
 
-        chunks = [chunk async for chunk in main.generate_resume_sse_events("session-3")]
-        payloads = _decode_sse_payloads(chunks)
+        await worker_runtime.execute_generation_job("session-3", "job-3", "resume_workflow")
 
-        assert [payload["type"] for payload in payloads] == ["status", "status", "error"]
+        assert record_event.await_count == 3
         update_job.assert_any_await(
             "job-3",
             state=final_state,
             status="error",
             error_message="writer parse failed",
         )
-        create_revision.assert_awaited_once_with("session-3", "generation_failed", final_state)
+        create_revision.assert_awaited_once_with(
+            "session-3",
+            "generation_failed",
+            final_state,
+        )
+
+
+@pytest.mark.unit
+class TestWorkerServiceAndEventStream:
+    @pytest.mark.asyncio
+    async def test_worker_start_endpoint_returns_job_payload(self, monkeypatch):
+        start_worker_job = AsyncMock(
+            return_value={
+                "job_id": "job-start",
+                "status": "queued",
+                "trigger": "start_workflow",
+            }
+        )
+        monkeypatch.setattr(worker_app, "start_worker_job", start_worker_job)
+
+        response = await worker_app.start_job(worker_app.WorkerJobRequest(session_id="session-1"))
+
+        assert response["job_id"] == "job-start"
+        start_worker_job.assert_awaited_once_with("session-1", "start_workflow")
+
+    @pytest.mark.asyncio
+    async def test_worker_resume_endpoint_raises_404_for_missing_session(self, monkeypatch):
+        start_worker_job = AsyncMock(side_effect=ValueError("Session not found"))
+        monkeypatch.setattr(worker_app, "start_worker_job", start_worker_job)
+
+        with pytest.raises(HTTPException) as exc:
+            await worker_app.resume_job(worker_app.WorkerJobRequest(session_id="missing"))
+
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Session not found"
+
+    @pytest.mark.asyncio
+    async def test_stream_job_events_emits_fallback_complete_event(self, monkeypatch):
+        list_events = AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "event_id": "event-1",
+                        "event_type": "status",
+                        "payload": {
+                            "type": "status",
+                            "status": "queued",
+                            "message": "queued",
+                        },
+                    }
+                ],
+                [
+                    {
+                        "event_id": "event-1",
+                        "event_type": "status",
+                        "payload": {
+                            "type": "status",
+                            "status": "queued",
+                            "message": "queued",
+                        },
+                    }
+                ],
+            ]
+        )
+        get_job = AsyncMock(
+            side_effect=[
+                {"job_id": "job-1", "status": "running", "pptx_path": ""},
+                {"job_id": "job-1", "status": "completed", "pptx_path": "/tmp/demo.pptx"},
+            ]
+        )
+
+        monkeypatch.setattr(event_stream, "list_job_events", list_events)
+        monkeypatch.setattr(event_stream, "get_generation_job", get_job)
+        monkeypatch.setattr(event_stream.asyncio, "sleep", AsyncMock())
+
+        chunks = [chunk async for chunk in event_stream.stream_job_events("job-1")]
+        payloads = _decode_sse_payloads(chunks)
+
+        assert [payload["type"] for payload in payloads] == ["status", "complete"]
+        assert payloads[-1]["pptx_path"] == "/tmp/demo.pptx"
