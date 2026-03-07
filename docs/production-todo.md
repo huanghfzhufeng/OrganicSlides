@@ -50,7 +50,8 @@ Examples:
 
 - [x] `REQ-010` Introduce validated runtime schemas for `ResearchPacket`, `StylePacket`, `SlideSpec`, and `RenderPlan`.
   Validation completed on `2026-03-07` with Pydantic runtime schemas wired into state initialization, Researcher, Planner, Writer, Visual, RenderPrep, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-011` Build the `StylePacket` assembler from style JSON, references, prompt constraints, and sample assets.
+- [x] `REQ-011` Build the `StylePacket` assembler from style JSON, references, prompt constraints, and sample assets.
+  Validation completed on `2026-03-07` with assembled StylePacket references/constraints/assets, tracked huashu reference sources, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-012` Upgrade researcher retrieval so `huashu-slides` references are actually retrievable for Chinese and English prompts.
 - [ ] `REQ-013` Inject `StylePacket` into planner prompts and validation.
 - [ ] `REQ-014` Inject `StylePacket` into writer prompts and validation.
