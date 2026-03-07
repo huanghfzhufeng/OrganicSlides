@@ -36,6 +36,7 @@ from auth import auth_router, get_current_user, get_current_active_user
 from auth.service import AuthService
 from event_stream import stream_job_events
 from job_queue import enqueue_generation_job
+from project_preview import build_project_preview
 from runtime_schemas import build_style_packet, serialize_models
 from services.object_storage import get_object_storage
 from styles.registry import get_registry
@@ -640,6 +641,30 @@ async def get_project_status(
         "slides_count": len(state.get("slides_data", [])),
         "pptx_path": state.get("pptx_path", ""),
         "error": state.get("error")
+    }
+
+
+@app.get("/api/v1/project/preview/{session_id}")
+async def get_project_preview(
+    session_id: str,
+    access_token: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a stable preview payload for the current persisted workflow state."""
+    await _authorize_project_access(session_id, access_token, current_user, db)
+    state = await _load_session_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    preview = build_project_preview(state)
+    return {
+        "session_id": session_id,
+        "status": state.get("current_status", "unknown"),
+        "pptx_path": state.get("pptx_path", ""),
+        "pptx_storage_key": state.get("pptx_storage_key", ""),
+        "preview": preview,
+        "last_restored_revision_number": state.get("last_restored_revision_number"),
     }
 
 

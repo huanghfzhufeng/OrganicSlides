@@ -128,6 +128,43 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
     const [isRetrying, setIsRetrying] = useState(false);
 
     useEffect(() => {
+        let cancelled = false;
+
+        const hydratePreview = async () => {
+            try {
+                const payload = await api.getProjectPreview(sessionId, sessionAccessToken);
+                if (cancelled) return;
+
+                const hydratedSlides: SlideProgress[] = payload.preview.slides.map((slide) => ({
+                    slideIndex: Math.max(slide.page_number - 1, 0),
+                    title: slide.title,
+                    renderPath: slide.render_path,
+                    status: (slide.status as SlideStatus) ?? 'pending',
+                    thumbnailUrl: slide.preview_url || slide.thumbnail_url || undefined,
+                }));
+
+                setSlides((current) => (current.length > 0 ? current : hydratedSlides));
+                if (payload.status === 'render_complete') {
+                    setIsDone(true);
+                    setProgress(100);
+                } else if (hydratedSlides.length > 0) {
+                    const completed = hydratedSlides.filter(
+                        (slide) => slide.status === 'complete' || slide.status === 'failed',
+                    ).length;
+                    setProgress(Math.min(10 + Math.round((completed / hydratedSlides.length) * 85), 95));
+                }
+            } catch {
+                // Ignore preview hydration failures and let the live SSE stream drive the UI.
+            }
+        };
+
+        hydratePreview();
+        return () => {
+            cancelled = true;
+        };
+    }, [sessionId, sessionAccessToken, attemptKey]);
+
+    useEffect(() => {
         setError(null);
         const eventSource = new EventSource(api.getResumeWorkflowUrl(sessionId, sessionAccessToken));
 
@@ -139,12 +176,13 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                 setProgress(prev => Math.min(prev + 15, 90));
             } else if (data.type === 'render_progress') {
                 // Per-slide rendering progress event from Task #8 backend
-                // Expected shape: { type, slide_index, slide_title, render_path, status, thumbnail_url?, error? }
-                const { slide_index, slide_title, render_path, status, thumbnail_url, error: slideError } = data;
+                // Expected shape: { type, slide_number, slide_index?, slide_title, render_path, status, thumbnail_url?, error? }
+                const slideIndex = data.slide_index ?? ((data.slide_number ?? 1) - 1);
+                const { slide_title, render_path, status, thumbnail_url, error: slideError } = data;
                 setSlides(prev => {
-                    const existing = prev.find(s => s.slideIndex === slide_index);
+                    const existing = prev.find(s => s.slideIndex === slideIndex);
                     const updated: SlideProgress = {
-                        slideIndex: slide_index,
+                        slideIndex,
                         title: slide_title ?? existing?.title ?? '',
                         renderPath: render_path ?? existing?.renderPath ?? 'path_a',
                         status: (status as SlideStatus) ?? 'pending',
@@ -152,7 +190,7 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                         error: slideError ?? existing?.error,
                     };
                     const next = existing
-                        ? prev.map(s => s.slideIndex === slide_index ? updated : s)
+                        ? prev.map(s => s.slideIndex === slideIndex ? updated : s)
                         : [...prev, updated].sort((a, b) => a.slideIndex - b.slideIndex);
 
                     // Derive progress from next state (no nested setState)
@@ -164,10 +202,10 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                 });
             } else if (data.type === 'slides_initialized') {
                 // Backend sends initial slide list so we can show pending cards immediately
-                // Expected: { type, slides: [{ index, title, render_path }] }
+                // Expected: { type, slides: [{ index|slide_index|slide_number, title, render_path }] }
                 if (Array.isArray(data.slides)) {
                     setSlides(data.slides.map((s: any) => ({
-                        slideIndex: s.index ?? s.slide_index ?? 0,
+                        slideIndex: s.index ?? s.slide_index ?? ((s.slide_number ?? 1) - 1),
                         title: s.title ?? '',
                         renderPath: s.render_path ?? 'path_a',
                         status: 'pending' as SlideStatus,

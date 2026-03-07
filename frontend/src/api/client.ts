@@ -70,6 +70,31 @@ export interface ProjectListItem {
     created_at: string;
 }
 
+export interface ProjectPreviewSlide {
+    page_number: number;
+    title: string;
+    render_path: string;
+    status: 'pending' | 'complete' | 'failed' | string;
+    preview_url: string;
+    artifact_url: string;
+    thumbnail_url: string;
+}
+
+export interface ProjectPreviewResponse {
+    session_id: string;
+    status: string;
+    pptx_path: string;
+    pptx_storage_key: string;
+    last_restored_revision_number?: number | null;
+    preview: {
+        slides_count: number;
+        completed_slides: number;
+        failed_slides: number;
+        thumbnail_urls: string[];
+        slides: ProjectPreviewSlide[];
+    };
+}
+
 export interface ProjectRevision {
     revision_id: string;
     project_id?: string | null;
@@ -227,6 +252,17 @@ export const api = {
             headers: tokenManager.getHeaders(),
         });
         if (!response.ok) throw new Error('Failed to fetch projects');
+        return response.json();
+    },
+
+    getProjectPreview: async (
+        sessionId: string,
+        sessionAccessToken?: string,
+    ): Promise<ProjectPreviewResponse> => {
+        const response = await fetch(
+            withProjectAccessToken(`${API_BASE_URL}/project/preview/${sessionId}`, sessionAccessToken),
+        );
+        if (!response.ok) throw new Error('Failed to fetch project preview');
         return response.json();
     },
 
