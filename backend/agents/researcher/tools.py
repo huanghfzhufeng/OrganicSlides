@@ -5,11 +5,40 @@
 
 import asyncio
 import logging
-import os
+import re
 from pathlib import Path
 from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
+
+_QUERY_EXPANSIONS = {
+    "training": {"培训", "课件", "education"},
+    "education": {"教育", "培训", "training"},
+    "deck": {"演示", "课件", "presentation"},
+    "presentation": {"演示", "presentation", "deck"},
+    "report": {"报告", "数据报告", "report"},
+    "data": {"数据", "data"},
+    "editorial": {"编辑", "杂志", "editorial"},
+    "magazine": {"杂志", "magazine"},
+    "nyt": {"纽约时报", "nyt", "editorial"},
+    "neo-brutalism": {"neo-brutalism", "新粗野主义", "粗野主义"},
+    "brutalism": {"新粗野主义", "粗野主义", "brutalism"},
+    "comic": {"漫画", "comic", "插画"},
+    "manga": {"漫画", "manga"},
+    "minimal": {"极简", "minimal"},
+    "luxury": {"奢侈", "luxury"},
+    "training deck": {"培训课件", "training deck"},
+    "培训": {"training", "education", "课件"},
+    "课件": {"training", "deck", "培训"},
+    "数据报告": {"data report", "report", "数据"},
+    "报告": {"report", "数据报告"},
+    "纽约时报": {"nyt", "editorial", "nyt magazine"},
+    "新粗野主义": {"neo-brutalism", "brutalism"},
+    "漫画": {"comic", "manga", "插画"},
+    "极简": {"minimal", "luxury"},
+}
+
+_CJK_SPLIT_CHARS = "的了和与及在将用做成关于让对以为"
 
 
 async def web_search(query: str) -> List[Dict[str, Any]]:
@@ -113,8 +142,7 @@ async def _search_huashu_references(query: str) -> List[Dict[str, Any]]:
     ]
 
     results = []
-    query_lower = query.lower()
-    query_tokens = set(query_lower.split())
+    query_signal = _build_query_signal(query)
 
     for filename, description in reference_files:
         filepath = candidate / filename
@@ -124,9 +152,10 @@ async def _search_huashu_references(query: str) -> List[Dict[str, Any]]:
         try:
             content = filepath.read_text(encoding="utf-8")
             chunks = _split_into_chunks(content, chunk_size=500)
+            metadata_text = f"{filename} {description}"
 
             for i, chunk in enumerate(chunks):
-                score = _compute_relevance(chunk, query_tokens)
+                score = _compute_relevance(chunk, query_signal, metadata_text=metadata_text)
                 if score > 0:
                     results.append({
                         "chunk_id": f"huashu_{filename}_{i}",
@@ -147,7 +176,7 @@ async def _search_huashu_references(query: str) -> List[Dict[str, Any]]:
 
 def _search_uploaded_documents(query: str, documents: List[Dict]) -> List[Dict[str, Any]]:
     """Search user-uploaded documents for relevant content."""
-    query_tokens = set(query.lower().split())
+    query_signal = _build_query_signal(query)
     results = []
 
     for doc in documents:
@@ -157,7 +186,11 @@ def _search_uploaded_documents(query: str, documents: List[Dict]) -> List[Dict[s
 
         chunks = _split_into_chunks(content, chunk_size=500)
         for i, chunk in enumerate(chunks):
-            score = _compute_relevance(chunk, query_tokens)
+            score = _compute_relevance(
+                chunk,
+                query_signal,
+                metadata_text=doc.get("filename", "uploaded_document"),
+            )
             if score > 0:
                 results.append({
                     "chunk_id": f"doc_{i}",
@@ -194,7 +227,11 @@ def _split_into_chunks(text: str, chunk_size: int = 500) -> List[str]:
     return chunks
 
 
-def _compute_relevance(chunk: str, query_tokens: set) -> float:
+def _compute_relevance(
+    chunk: str,
+    query_tokens: set | dict[str, set[str] | list[str]],
+    metadata_text: str = "",
+) -> float:
     """
     Simple keyword-based relevance scoring.
     Returns a score between 0 and 1.
@@ -202,16 +239,112 @@ def _compute_relevance(chunk: str, query_tokens: set) -> float:
     if not query_tokens:
         return 0.0
 
-    chunk_lower = chunk.lower()
-    matched = sum(1 for token in query_tokens if token in chunk_lower)
-    score = matched / len(query_tokens)
+    if isinstance(query_tokens, dict):
+        signal = query_tokens
+    else:
+        signal = {"terms": set(query_tokens), "phrases": []}
 
-    # Boost if query appears as a phrase
-    query_phrase = " ".join(query_tokens)
-    if query_phrase in chunk_lower:
-        score = min(1.0, score + 0.3)
+    haystack = f"{metadata_text}\n{chunk}".lower() if metadata_text else chunk.lower()
+    metadata_lower = metadata_text.lower() if metadata_text else ""
 
-    return score
+    score = 0.0
+    matched_terms = 0
+
+    for phrase in signal.get("phrases", []):
+        if phrase and phrase in haystack:
+            score += 1.8 if len(phrase) >= 4 else 0.8
+
+    for term in signal.get("terms", set()):
+        if not term or term not in haystack:
+            continue
+        matched_terms += 1
+        weight = 1.2 if len(term) >= 4 else 0.5
+        if metadata_lower and term in metadata_lower:
+            weight += 0.4
+        score += weight
+
+    if matched_terms:
+        score += matched_terms / max(len(signal.get("terms", [])), 1)
+
+    return round(score, 4)
+
+
+def _build_query_signal(query: str) -> dict[str, set[str] | list[str]]:
+    normalized = _normalize_query(query)
+    terms = _tokenize_query(normalized)
+    expanded_terms = set(terms)
+    for term in list(terms):
+        expanded_terms.update(_expand_query_term(term))
+
+    phrases = _extract_query_phrases(normalized)
+    for phrase in list(phrases):
+        expanded_terms.update(_expand_query_term(phrase))
+
+    cleaned_terms = {
+        term
+        for term in expanded_terms
+        if term and (len(term) >= 2 or _contains_cjk(term))
+    }
+    return {
+        "terms": cleaned_terms,
+        "phrases": sorted(set(phrases), key=len, reverse=True),
+    }
+
+
+def _normalize_query(query: str) -> str:
+    query = (query or "").strip().lower()
+    query = re.sub(r"[_/|,;:()]+", " ", query)
+    query = re.sub(r"\s+", " ", query)
+    return query
+
+
+def _tokenize_query(query: str) -> set[str]:
+    terms: set[str] = set()
+    english_words = re.findall(r"[a-z0-9][a-z0-9\-+]*", query)
+    terms.update(english_words)
+    for size in (2, 3):
+        for index in range(len(english_words) - size + 1):
+            terms.add(" ".join(english_words[index:index + size]))
+
+    for sequence in re.findall(r"[\u4e00-\u9fff]{2,}", query):
+        for part in _split_cjk_parts(sequence):
+            if len(part) >= 2:
+                terms.add(part)
+            for size in range(2, min(4, len(part)) + 1):
+                for index in range(len(part) - size + 1):
+                    terms.add(part[index:index + size])
+
+    return {term for term in terms if term}
+
+
+def _extract_query_phrases(query: str) -> list[str]:
+    phrases = []
+    if query:
+        phrases.append(query)
+    phrases.extend(
+        phrase
+        for phrase in _tokenize_query(query)
+        if " " in phrase or len(phrase) >= 4
+    )
+    return sorted(set(phrases), key=len, reverse=True)
+
+
+def _split_cjk_parts(sequence: str) -> list[str]:
+    pattern = f"[{_CJK_SPLIT_CHARS}]+"
+    return [part for part in re.split(pattern, sequence) if part]
+
+
+def _expand_query_term(term: str) -> set[str]:
+    expansions = set()
+    for key, values in _QUERY_EXPANSIONS.items():
+        if key in term or term in values:
+            expansions.add(key)
+            expansions.update(values)
+    return expansions
+
+
+def _contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text))
 
 
 async def summarize_sources(sources: List[Dict]) -> str:
