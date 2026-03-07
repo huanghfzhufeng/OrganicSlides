@@ -225,6 +225,14 @@ docker-compose up --build
 - `postgres` 持久化数据库
 - `redis` 可选缓存/协调组件
 
+Staging / Production 部署方式见：
+
+- [docs/deployment-environments.md](/tmp/organicslides-req004/docs/deployment-environments.md)
+- `.env.staging.example`
+- `.env.production.example`
+- `docker-compose.staging.yml`
+- `docker-compose.production.yml`
+
 ### 4. 访问应用
 
 - **前端界面**: http://localhost:5173
