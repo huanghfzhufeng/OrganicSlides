@@ -22,6 +22,7 @@ from database.project_tracking_store import (
     count_project_revisions,
     create_project_revision,
     find_session_active_generation_job,
+    get_generation_failure,
     list_project_revisions,
     restore_project_revision as restore_project_revision_snapshot,
     sync_project_state,
@@ -158,6 +159,21 @@ class RevisionRestoreRequest(BaseModel):
         return self
 
 
+class RetryRequest(BaseModel):
+    session_id: str
+    trigger: Optional[str] = None
+    access_token: Optional[str] = None
+
+    @field_validator("trigger")
+    @classmethod
+    def valid_trigger(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if value not in {"start_workflow", "resume_workflow"}:
+            raise ValueError("trigger must be start_workflow or resume_workflow")
+        return value
+
+
 async def _authorize_project_access(
     session_id: str,
     access_token: Optional[str],
@@ -212,6 +228,13 @@ async def _enqueue_worker_job(session_id: str, trigger: str) -> dict:
         return await enqueue_generation_job(session_id, trigger, source="api")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _infer_retry_trigger(state: dict) -> str:
+    """Choose the next retry entrypoint from the persisted workflow state."""
+    if state.get("outline_approved"):
+        return "resume_workflow"
+    return "start_workflow"
 
 
 # ==================== API 端点 ====================
@@ -684,6 +707,56 @@ async def restore_project_revision(
             "pptx_path": restored_state.get("pptx_path", ""),
             "last_restored_revision_number": restored_state.get("last_restored_revision_number"),
         },
+    }
+
+
+@app.get("/api/v1/project/failure/{session_id}")
+async def get_project_failure(
+    session_id: str,
+    access_token: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the latest user-facing failure summary for a project session."""
+    await _authorize_project_access(session_id, access_token, current_user, db)
+    state = await _load_session_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    failure = await get_generation_failure(session_id)
+    return {
+        "session_id": session_id,
+        "failure": failure,
+    }
+
+
+@app.post("/api/v1/project/retry")
+async def retry_project_generation(
+    data: RetryRequest,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue a retry for the latest failed workflow phase."""
+    await _authorize_project_access(data.session_id, data.access_token, current_user, db)
+    state = await _load_session_state(data.session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    active_job = await find_session_active_generation_job(data.session_id)
+    if active_job is not None:
+        raise HTTPException(status_code=409, detail="Generation is already in progress")
+
+    failure = await get_generation_failure(data.session_id)
+    if failure and not failure["retry_available"]:
+        raise HTTPException(status_code=409, detail=failure["message"])
+
+    trigger = data.trigger or (failure["retry_trigger"] if failure else None) or _infer_retry_trigger(state)
+    job = await _enqueue_worker_job(data.session_id, trigger)
+    return {
+        "status": "retry_queued",
+        "session_id": data.session_id,
+        "job_id": job["job_id"],
+        "trigger": trigger,
     }
 
 

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Globe, FileText, Loader2, Search, BookOpen, Database, CheckCircle2 } from 'lucide-react';
-import { api, type OutlineItem } from '../api/client';
+import { api, type OutlineItem, type ProjectFailure } from '../api/client';
 import { flowingLeavesIcon } from '../assets/icons';
 import { ResearchSkeleton } from '../components/Skeleton';
 import ErrorMessage from '../components/ErrorMessage';
@@ -39,8 +39,12 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, sessionAccessTok
     });
     const [progress, setProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
+    const [failure, setFailure] = useState<ProjectFailure | null>(null);
+    const [attemptKey, setAttemptKey] = useState(0);
+    const [isRetrying, setIsRetrying] = useState(false);
 
     useEffect(() => {
+        setError(null);
         const eventSource = new EventSource(api.getStartWorkflowUrl(sessionId, sessionAccessToken));
 
         eventSource.onmessage = (event) => {
@@ -69,26 +73,84 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, sessionAccessTok
                 eventSource.close();
                 setTimeout(() => onComplete(data.outline), 500);
             } else if (data.type === 'error') {
-                setError(data.message || '研究过程出错，请重试');
+                const nextFailure: ProjectFailure = {
+                    job_id: data.job_id ?? '',
+                    session_id: sessionId,
+                    trigger: data.retry_trigger ?? 'start_workflow',
+                    status: data.status ?? 'error',
+                    current_agent: data.failure_stage ?? data.agent ?? 'workflow',
+                    error_type: data.error_type ?? 'generation_failed',
+                    failure_stage: data.failure_stage ?? data.agent ?? 'workflow',
+                    message: data.user_message ?? data.message ?? '研究过程出错，请重试',
+                    technical_message: data.message ?? '研究过程出错，请重试',
+                    recoverable: data.recoverable ?? true,
+                    retry_available: data.retry_available ?? true,
+                    retry_trigger: data.retry_trigger ?? 'start_workflow',
+                    details: data.details ?? {},
+                    failed_at: data.failed_at ?? null,
+                };
+                setFailure(nextFailure);
+                setError(nextFailure.message);
                 eventSource.close();
             }
         };
 
         eventSource.onerror = () => {
+            setFailure(null);
             setError('连接中断，请检查网络后重试');
             eventSource.close();
         };
 
         return () => eventSource.close();
-    }, [sessionId, sessionAccessToken, onComplete]);
+    }, [sessionId, sessionAccessToken, onComplete, attemptKey]);
+
+    const handleRetry = async () => {
+        try {
+            setIsRetrying(true);
+            setLogs([]);
+            setStats({
+                sourcesFound: 0,
+                dataProcessed: 0,
+                sectionsCreated: 0,
+            });
+            setCurrentStatus('正在重新发起研究...');
+            setProgress(0);
+            setError(null);
+            await api.retryProjectGeneration(
+                sessionId,
+                failure?.retry_trigger ?? 'start_workflow',
+                sessionAccessToken,
+            );
+            setFailure(null);
+            setAttemptKey((value) => value + 1);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsRetrying(false);
+        }
+    };
 
     if (error) {
+        const detailLines = failure
+            ? [
+                `失败阶段：${failure.failure_stage}`,
+                `错误类型：${failure.error_type}`,
+                `技术信息：${failure.technical_message}`,
+            ]
+            : [];
         return (
             <div className="max-w-3xl mx-auto page-enter">
                 <ErrorMessage
+                    title={failure ? '研究任务失败' : '连接异常'}
                     message={error}
-                    type="network"
-                    onRetry={() => window.location.reload()}
+                    details={detailLines}
+                    type={failure ? 'error' : 'network'}
+                    retryLabel={isRetrying ? '重新排队中...' : failure ? '重新排队' : '重新连接'}
+                    onRetry={
+                        failure
+                            ? (failure.retry_available ? handleRetry : undefined)
+                            : () => setAttemptKey((value) => value + 1)
+                    }
                 />
             </div>
         );

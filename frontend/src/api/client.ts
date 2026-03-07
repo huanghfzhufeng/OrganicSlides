@@ -109,6 +109,35 @@ export interface ProjectRevisionRestoreResponse {
     };
 }
 
+export interface ProjectFailure {
+    job_id: string;
+    session_id: string;
+    trigger: 'start_workflow' | 'resume_workflow' | string;
+    status: string;
+    current_agent: string;
+    error_type: string;
+    failure_stage: string;
+    message: string;
+    technical_message: string;
+    recoverable: boolean;
+    retry_available: boolean;
+    retry_trigger: 'start_workflow' | 'resume_workflow' | string | null;
+    details: Record<string, unknown>;
+    failed_at: string | null;
+}
+
+export interface ProjectFailureResponse {
+    session_id: string;
+    failure: ProjectFailure | null;
+}
+
+export interface RetryProjectResponse {
+    status: string;
+    session_id: string;
+    job_id: string;
+    trigger: 'start_workflow' | 'resume_workflow' | string;
+}
+
 // ==================== Token 管理 ====================
 
 const TOKEN_KEY = 'masppt_token';
@@ -234,6 +263,47 @@ export const api = {
             }),
         });
         if (!response.ok) throw new Error('Failed to restore project revision');
+        return response.json();
+    },
+
+    getProjectFailure: async (
+        sessionId: string,
+        sessionAccessToken?: string,
+    ): Promise<ProjectFailureResponse> => {
+        const response = await fetch(
+            withProjectAccessToken(`${API_BASE_URL}/project/failure/${sessionId}`, sessionAccessToken),
+        );
+        if (!response.ok) throw new Error('Failed to fetch project failure');
+        return response.json();
+    },
+
+    retryProjectGeneration: async (
+        sessionId: string,
+        trigger?: 'start_workflow' | 'resume_workflow' | string,
+        sessionAccessToken?: string,
+    ): Promise<RetryProjectResponse> => {
+        const response = await fetch(`${API_BASE_URL}/project/retry`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...tokenManager.getHeaders(),
+            },
+            body: JSON.stringify({
+                session_id: sessionId,
+                trigger: trigger ?? null,
+                access_token: sessionAccessToken ?? null,
+            }),
+        });
+        if (!response.ok) {
+            let message = 'Failed to retry generation';
+            try {
+                const error = await response.json();
+                message = error.detail || message;
+            } catch {
+                // Fall back to the default message when the error body is empty.
+            }
+            throw new Error(message);
+        }
         return response.json();
     },
 

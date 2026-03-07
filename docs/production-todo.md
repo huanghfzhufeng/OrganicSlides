@@ -86,7 +86,8 @@ Examples:
 
 - [x] `REQ-025` Add project revision history and restore capability.
   Validation completed on `2026-03-07` with project revision history and restore APIs, active-job restore guards, frontend revision client methods, `tests/integration/test_styles_api.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-026` Add transparent user-facing failure reasons and retry actions.
+- [x] `REQ-026` Add transparent user-facing failure reasons and retry actions.
+  Validation completed on `2026-03-07` with structured worker failure payloads, failure summary and retry APIs, in-app retry actions for research/generation flows, `tests/integration/test_styles_api.py`, `tests/unit/test_generation_tracking.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-027` Improve preview quality and history consistency.
 - [ ] `REQ-028` Add operator/admin tooling for failed jobs and support actions.
 

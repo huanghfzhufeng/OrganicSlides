@@ -54,6 +54,16 @@ def _fallback_terminal_payload(job: dict) -> dict:
             "type": "error",
             "status": "error",
             "message": job.get("error_message") or "Worker job failed",
+            "user_message": job.get("error_message") or "生成失败，请重试",
+            "error_type": "generation_failed",
+            "failure_stage": job.get("current_agent") or "workflow",
+            "recoverable": True,
+            "retry_available": True,
+            "retry_trigger": job.get("trigger"),
+            "details": {
+                "agent": job.get("current_agent") or "workflow",
+                "workflow_status": job.get("status"),
+            },
         }
     payload = {"type": "complete", "status": "done"}
     if job.get("pptx_path"):

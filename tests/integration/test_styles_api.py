@@ -34,6 +34,7 @@ class TestStylesAPI:
         self.session_store = {}
         self.revisions = []
         self.active_job = None
+        self.failure_summary = None
 
         async def fake_load_session_state(session_id):
             return self.session_store.get(session_id)
@@ -137,6 +138,11 @@ class TestStylesAPI:
                 return dict(self.active_job)
             return None
 
+        async def fake_get_generation_failure(session_id):
+            if self.failure_summary and self.failure_summary["session_id"] == session_id:
+                return dict(self.failure_summary)
+            return None
+
         monkeypatch.setattr(main, "_load_session_state", fake_load_session_state)
         monkeypatch.setattr(main, "_save_session_state", fake_save_session_state)
         monkeypatch.setattr(main, "_merge_session_state", fake_merge_session_state)
@@ -145,6 +151,7 @@ class TestStylesAPI:
         monkeypatch.setattr(main, "list_project_revisions", fake_list_project_revisions)
         monkeypatch.setattr(main, "restore_project_revision_snapshot", fake_restore_project_revision)
         monkeypatch.setattr(main, "find_session_active_generation_job", fake_find_session_active_generation_job)
+        monkeypatch.setattr(main, "get_generation_failure", fake_get_generation_failure)
 
         yield
 
@@ -413,6 +420,109 @@ class TestStylesAPI:
 
         assert response.status_code == 409
         assert response.json()["detail"] == "Cannot restore revisions while a generation job is active"
+
+    def test_project_failure_endpoint_returns_latest_failure_summary(self):
+        """Failure endpoint should surface user-facing failure context"""
+        project = self._create_project(prompt="Failure summary test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+        self.failure_summary = {
+            "job_id": "job-failed",
+            "session_id": session_id,
+            "trigger": "resume_workflow",
+            "status": "error",
+            "current_agent": "visual",
+            "error_type": "visual_failed",
+            "failure_stage": "visual",
+            "message": "visual 阶段失败，请修正后重试",
+            "technical_message": "visual parse failed",
+            "recoverable": True,
+            "retry_available": True,
+            "retry_trigger": "resume_workflow",
+            "details": {"agent": "visual"},
+            "failed_at": "2026-03-07T00:00:05Z",
+        }
+
+        response = self.client.get(
+            f"/api/v1/project/failure/{session_id}",
+            params={"access_token": access_token},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["failure"]["error_type"] == "visual_failed"
+        assert payload["failure"]["retry_available"] is True
+        assert payload["failure"]["retry_trigger"] == "resume_workflow"
+
+    def test_retry_project_generation_queues_failed_trigger(self, monkeypatch):
+        """Retry endpoint should requeue the failed workflow trigger"""
+        project = self._create_project(prompt="Retry workflow test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+        self.failure_summary = {
+            "job_id": "job-failed",
+            "session_id": session_id,
+            "trigger": "resume_workflow",
+            "status": "error",
+            "current_agent": "renderer",
+            "error_type": "renderer_failed",
+            "failure_stage": "renderer",
+            "message": "renderer 阶段失败，请修正后重试",
+            "technical_message": "renderer failed",
+            "recoverable": True,
+            "retry_available": True,
+            "retry_trigger": "resume_workflow",
+            "details": {"agent": "renderer"},
+            "failed_at": "2026-03-07T00:00:06Z",
+        }
+
+        async def fake_enqueue_worker_job(session_id_param, trigger):
+            assert session_id_param == session_id
+            assert trigger == "resume_workflow"
+            return {"job_id": "job-retry", "status": "queued", "trigger": trigger}
+
+        monkeypatch.setattr(self.main, "_enqueue_worker_job", fake_enqueue_worker_job)
+
+        response = self.client.post(
+            "/api/v1/project/retry",
+            json={"session_id": session_id, "access_token": access_token},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "retry_queued"
+        assert payload["job_id"] == "job-retry"
+        assert payload["trigger"] == "resume_workflow"
+
+    def test_retry_project_generation_rejects_non_retryable_failure(self):
+        """Retry endpoint should reject non-recoverable failures"""
+        project = self._create_project(prompt="Retry rejection test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+        self.failure_summary = {
+            "job_id": "job-failed",
+            "session_id": session_id,
+            "trigger": "start_workflow",
+            "status": "error",
+            "current_agent": "worker",
+            "error_type": "session_not_found",
+            "failure_stage": "worker",
+            "message": "会话不存在，无法继续重试",
+            "technical_message": "Session not found",
+            "recoverable": False,
+            "retry_available": False,
+            "retry_trigger": None,
+            "details": {"agent": "worker"},
+            "failed_at": "2026-03-07T00:00:07Z",
+        }
+
+        response = self.client.post(
+            "/api/v1/project/retry",
+            json={"session_id": session_id, "access_token": access_token},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "会话不存在，无法继续重试"
 
     def test_project_create_with_custom_style(self):
         """Test creating project with different styles"""

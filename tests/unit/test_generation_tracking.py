@@ -359,6 +359,12 @@ class TestQueueConsumerAndWorkerRuntime:
         await worker_runtime.execute_generation_job("session-3", "job-3", "resume_workflow")
 
         assert record_event.await_count == 3
+        error_payload = record_event.await_args_list[-1].args[2]
+        assert error_payload["type"] == "error"
+        assert error_payload["error_type"] == "validation_error"
+        assert error_payload["failure_stage"] == "error_handler"
+        assert error_payload["retry_available"] is True
+        assert error_payload["retry_trigger"] == "resume_workflow"
         update_job.assert_any_await(
             "job-3",
             state=final_state,

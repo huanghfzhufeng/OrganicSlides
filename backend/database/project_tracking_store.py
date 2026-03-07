@@ -434,6 +434,36 @@ async def find_session_active_generation_job(session_id: str) -> Optional[dict]:
         }
 
 
+async def get_latest_failed_generation_job(session_id: str) -> Optional[dict]:
+    """Return the most recent failed generation job for a workflow session."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(GenerationJob)
+            .where(
+                GenerationJob.session_id == session_id,
+                GenerationJob.status == "error",
+            )
+            .order_by(GenerationJob.updated_at.desc(), GenerationJob.created_at.desc())
+            .limit(1)
+        )
+        job = result.scalars().first()
+        if job is None:
+            return None
+
+        return {
+            "job_id": str(job.id),
+            "session_id": job.session_id,
+            "project_id": str(job.project_id) if job.project_id else None,
+            "trigger": job.trigger,
+            "status": job.status,
+            "current_agent": job.current_agent,
+            "error_message": job.error_message,
+            "pptx_path": job.pptx_path or "",
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        }
+
+
 async def claim_next_generation_job() -> Optional[dict]:
     """Claim the next queued or stale in-flight job using row-level locking."""
     async with AsyncSessionLocal() as db:
@@ -495,3 +525,43 @@ async def list_job_events(job_id: Union[str, uuid.UUID]) -> list[dict]:
             }
             for event in events
         ]
+
+
+async def get_generation_failure(session_id: str) -> Optional[dict]:
+    """Build a user-facing failure summary from the latest failed job and its error event."""
+    failed_job = await get_latest_failed_generation_job(session_id)
+    if failed_job is None:
+        return None
+
+    events = await list_job_events(failed_job["job_id"])
+    error_event = next(
+        (
+            event
+            for event in reversed(events)
+            if event["event_type"] == "error" or (event.get("payload") or {}).get("type") == "error"
+        ),
+        None,
+    )
+    payload = dict(error_event.get("payload") or {}) if error_event else {}
+
+    return {
+        "job_id": failed_job["job_id"],
+        "session_id": session_id,
+        "trigger": payload.get("retry_trigger") or failed_job["trigger"],
+        "status": failed_job["status"],
+        "current_agent": failed_job["current_agent"],
+        "error_type": payload.get("error_type", "generation_failed"),
+        "failure_stage": payload.get("failure_stage") or failed_job["current_agent"] or "workflow",
+        "message": payload.get("user_message")
+        or payload.get("message")
+        or failed_job.get("error_message")
+        or "Generation failed",
+        "technical_message": payload.get("message")
+        or failed_job.get("error_message")
+        or "Generation failed",
+        "recoverable": payload.get("recoverable", True),
+        "retry_available": payload.get("retry_available", True),
+        "retry_trigger": payload.get("retry_trigger") or failed_job["trigger"],
+        "details": payload.get("details", {}),
+        "failed_at": error_event["created_at"] if error_event else failed_job["updated_at"],
+    }
