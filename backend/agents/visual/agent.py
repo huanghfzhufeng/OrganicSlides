@@ -16,7 +16,9 @@ from agents.visual.prompts import (
     VISUAL_USER_TEMPLATE,
 )
 from agents.visual.tools import (
+    build_style_context,
     create_slides_summary_for_visual,
+    validate_visual_constraints,
 )
 from agents.base import get_llm, create_system_message
 from agents.structured_output import extract_json_payload, resolve_structured_output
@@ -76,10 +78,12 @@ async def run(state: dict) -> dict[str, Any]:
 
     # 准备幻灯片内容摘要（含新字段）
     slides_summary = create_slides_summary_for_visual(slides_data)
+    style_context = build_style_context(style_config)
     base_style_prompt = style_config.get("base_style_prompt", "")
 
     user_message = VISUAL_USER_TEMPLATE.format(
         style_config_json=json.dumps(style_config, ensure_ascii=False, indent=2),
+        style_context=style_context,
         base_style_prompt=base_style_prompt or "（未指定基础风格提示词，使用 Path A HTML 渲染）",
         slides_summary=slides_summary,
     )
@@ -100,6 +104,7 @@ async def run(state: dict) -> dict[str, Any]:
         repair_user_template=VISUAL_REPAIR_USER_TEMPLATE,
         repair_context={
             "style_config_json": json.dumps(style_config, ensure_ascii=False, indent=2),
+            "style_context": style_context,
             "slides_summary": slides_summary,
         },
     )
@@ -216,6 +221,10 @@ def _validate_visual_plans(plans: list, slides_data: list, style_config: dict) -
 
         if not plan.get("title"):
             return False, f"plan {index + 1} missing title"
+
+    style_is_valid, style_message = validate_visual_constraints(plans, slides_data, style_config)
+    if not style_is_valid:
+        return False, style_message
 
     try:
         validate_render_plans(plans, style_config)

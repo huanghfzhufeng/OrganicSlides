@@ -124,7 +124,7 @@ class TestStructuredOutputRepair:
                 "page_number": 1,
                 "render_path": "path_b",
                 "layout_name": "blank",
-                "image_prompt": "Warm editorial illustration for the assertion slide",
+                "image_prompt": "Visual Reference: warm editorial storytelling.\\n\\nBase Style: restrained editorial illustration with strong typography.\\n\\nDesign Intent: audience should feel that stabilizing first is the disciplined move.\\n\\nText to Render:\\n- Title: \\\"先修稳定性再扩张\\\"\\n\\nVisual Narrative: A calm scene where the team pauses to reinforce foundations before accelerating again.",
                 "style_notes": "修复完成"
               }
             ]
