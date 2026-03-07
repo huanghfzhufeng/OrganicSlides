@@ -3,6 +3,7 @@
 """
 
 import json
+import re
 from typing import List, Dict, Any, Optional
 
 from rendering_policy import effective_render_paths, enforce_render_path_preference, get_render_path_preference
@@ -196,6 +197,33 @@ def validate_visual_constraints(
     return True, "验证通过"
 
 
+def evaluate_visual_quality(
+    plans: List[Dict[str, Any]],
+    slides_data: List[Dict[str, Any]],
+    style_config: Dict[str, Any],
+) -> tuple[bool, str]:
+    """Apply higher-signal visual quality gates before render preparation."""
+    for index, plan in enumerate(plans):
+        slide = slides_data[index] if index < len(slides_data) else {}
+        expected_render_path = determine_render_path(slide, style_config)
+        if plan.get("render_path") != expected_render_path:
+            return (
+                False,
+                f"plan {index + 1} render_path must follow visual policy: "
+                f"expected '{expected_render_path}'",
+            )
+
+        if plan.get("render_path") == "path_a":
+            is_valid, message = _evaluate_path_a_html(plan, slide)
+        else:
+            is_valid, message = _evaluate_path_b_prompt(plan, slide)
+
+        if not is_valid:
+            return False, f"plan {index + 1} {message}"
+
+    return True, "验证通过"
+
+
 def build_default_image_prompt(slide: Dict, style_config: Dict) -> str:
     """Generate a basic Path B prompt when the upstream agent did not provide one."""
     explicit_prompt = slide.get("image_prompt")
@@ -365,3 +393,97 @@ def _required_section_variants(section: str) -> List[str]:
 
 def _matched_forbidden_terms(image_prompt: str, forbidden_terms: List[str]) -> List[str]:
     return sorted({term for term in forbidden_terms if term and term in image_prompt})
+
+
+def _evaluate_path_a_html(plan: Dict[str, Any], slide: Dict[str, Any]) -> tuple[bool, str]:
+    html_content = str(plan.get("html_content") or "")
+    expected_title = (
+        slide.get("text_to_render", {}).get("title")
+        or slide.get("title")
+        or ""
+    ).strip()
+
+    checks = [
+        ("missing doctype", "<!doctype html>" in html_content.lower()),
+        ("must define <body>", "<body" in html_content.lower()),
+        ("must define 720pt x 405pt body", "width: 720pt" in html_content.lower() and "height: 405pt" in html_content.lower()),
+        ("must include the slide title", expected_title in html_content if expected_title else True),
+        ("must not use CSS gradients", "linear-gradient" not in html_content.lower()),
+        ("must not use background-image", "background-image" not in html_content.lower()),
+    ]
+    for message, passed in checks:
+        if not passed:
+            return False, message
+
+    if re.search(r"<div[^>]*>\s*[^<\s][^<]*\s*</div>", html_content, re.IGNORECASE):
+        return False, "must not place raw text directly inside div elements"
+
+    return True, "验证通过"
+
+
+def _evaluate_path_b_prompt(plan: Dict[str, Any], slide: Dict[str, Any]) -> tuple[bool, str]:
+    image_prompt = str(plan.get("image_prompt") or "")
+    expected_title = (
+        slide.get("text_to_render", {}).get("title")
+        or slide.get("title")
+        or ""
+    ).strip()
+
+    sections = {
+        "visual reference": _extract_prompt_section(
+            image_prompt,
+            "visual reference",
+            ["base style", "design intent", "text to render", "visual narrative"],
+        ),
+        "base style": _extract_prompt_section(
+            image_prompt,
+            "base style",
+            ["design intent", "text to render", "visual narrative"],
+        ),
+        "design intent": _extract_prompt_section(
+            image_prompt,
+            "design intent",
+            ["text to render", "visual narrative"],
+        ),
+        "text to render": _extract_prompt_section(
+            image_prompt,
+            "text to render",
+            ["visual narrative"],
+        ),
+        "visual narrative": _extract_prompt_section(
+            image_prompt,
+            "visual narrative",
+            [],
+        ),
+    }
+
+    for name, value in sections.items():
+        if _text_length(value) < 12:
+            return False, f"{name} section is too thin"
+
+    if expected_title and expected_title not in sections["text to render"]:
+        return False, "text to render section must include the expected title"
+
+    if _text_length(sections["visual narrative"]) < 24:
+        return False, "visual narrative must provide a substantive scene description"
+
+    return True, "验证通过"
+
+
+def _extract_prompt_section(image_prompt: str, heading: str, next_headings: List[str]) -> str:
+    prompt_lower = image_prompt.lower()
+    start = prompt_lower.find(f"{heading}:")
+    if start == -1:
+        return ""
+
+    section_start = start + len(heading) + 1
+    end = len(image_prompt)
+    for next_heading in next_headings:
+        candidate = prompt_lower.find(f"{next_heading}:", section_start)
+        if candidate != -1:
+            end = min(end, candidate)
+    return image_prompt[section_start:end].strip()
+
+
+def _text_length(text: Any) -> int:
+    return len("".join(str(text).split()))

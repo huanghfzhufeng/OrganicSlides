@@ -18,6 +18,7 @@ from agents.visual.prompts import (
 from agents.visual.tools import (
     build_style_context,
     create_slides_summary_for_visual,
+    evaluate_visual_quality,
     validate_visual_constraints,
 )
 from agents.base import get_llm, create_system_message
@@ -225,6 +226,10 @@ def _validate_visual_plans(plans: list, slides_data: list, style_config: dict) -
     style_is_valid, style_message = validate_visual_constraints(plans, slides_data, style_config)
     if not style_is_valid:
         return False, style_message
+
+    quality_is_valid, quality_message = evaluate_visual_quality(plans, slides_data, style_config)
+    if not quality_is_valid:
+        return False, quality_message
 
     try:
         validate_render_plans(plans, style_config)
