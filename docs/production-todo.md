@@ -77,7 +77,8 @@ Examples:
   Validation completed on `2026-03-07` with stale job reclamation, heartbeat refresh, idempotent job reuse for completed workflow phases, fixed HITL SSE termination, `tests/unit/test_generation_tracking.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [x] `REQ-022` Move generated artifacts, thumbnails, and previews to object storage.
   Validation completed on `2026-03-07` with object storage abstraction, renderer uploads for presentations/slides/thumbnails, asset proxy API, MinIO compose topology, `tests/unit/test_object_storage.py`, `tests/integration/test_styles_api.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-023` Add asset retention, cleanup, and metadata jobs.
+- [x] `REQ-023` Add asset retention, cleanup, and metadata jobs.
+  Validation completed on `2026-03-07` with stored asset metadata, worker cleanup loop for expired objects, retention settings, `tests/unit/test_asset_cleanup.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-024` Add staging and production environment separation.
 
 ## 6. Phase 4: Product and User Experience

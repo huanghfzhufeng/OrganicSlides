@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from database.asset_store import record_stored_asset
 from agents.renderer.paths import SlideRenderResult, render_slide
 from agents.renderer.preflight import validate_renderer_preflight
 from agents.renderer.tools import (
@@ -164,11 +165,13 @@ async def _run_from_render_plans(
         return _error_result(state, f"Assembly failed: {exc}")
 
     try:
-        stored_presentation = await _upload_presentation_async(final_path, session_id)
+        asset_run_id = uuid.uuid4().hex[:8]
+        stored_presentation = await _upload_presentation_async(final_path, session_id, asset_run_id)
         slide_files, progress_events = await _persist_slide_outputs(
             results,
             session_id,
             total,
+            asset_run_id,
         )
     except Exception as exc:
         return _error_result(state, f"Object storage failed: {exc}")
@@ -217,11 +220,13 @@ async def _run_dual_path(
         return _error_result(state, f"Assembly failed: {exc}")
 
     try:
-        stored_presentation = await _upload_presentation_async(final_path, session_id)
+        asset_run_id = uuid.uuid4().hex[:8]
+        stored_presentation = await _upload_presentation_async(final_path, session_id, asset_run_id)
         slide_files, progress_events = await _persist_slide_outputs(
             results,
             session_id,
             total,
+            asset_run_id,
         )
     except Exception as exc:
         return _error_result(state, f"Object storage failed: {exc}")
@@ -248,7 +253,11 @@ async def _run_legacy(
         filepath = await loop.run_in_executor(
             None, lambda: _build_pptx_legacy(slides_data, style_config, session_id)
         )
-        stored_presentation = await _upload_presentation_async(filepath, session_id)
+        stored_presentation = await _upload_presentation_async(
+            filepath,
+            session_id,
+            uuid.uuid4().hex[:8],
+        )
         return {
             "pptx_path": stored_presentation.url,
             "pptx_storage_key": stored_presentation.key,
@@ -425,8 +434,8 @@ def _error_result(state: dict, message: str) -> dict[str, Any]:
     }
 
 
-def _build_object_key(session_id: str, category: str, filename: str) -> str:
-    return f"sessions/{session_id}/{category}/{filename}"
+def _build_object_key(session_id: str, asset_run_id: str, category: str, filename: str) -> str:
+    return f"sessions/{session_id}/runs/{asset_run_id}/{category}/{filename}"
 
 
 def _slide_artifact_kind(result: SlideRenderResult) -> str:
@@ -454,18 +463,33 @@ async def _upload_file_to_object_storage(
     )
 
 
-async def _upload_presentation_async(local_path: str, session_id: str) -> StoredObject:
-    return await _upload_file_to_object_storage(
+async def _upload_presentation_async(local_path: str, session_id: str, asset_run_id: str) -> StoredObject:
+    stored = await _upload_file_to_object_storage(
         local_path,
-        _build_object_key(session_id, "presentations", f"presentation_{session_id}.pptx"),
+        _build_object_key(
+            session_id,
+            asset_run_id,
+            "presentations",
+            f"presentation_{session_id}.pptx",
+        ),
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     )
+    await record_stored_asset(
+        session_id,
+        "presentation",
+        stored.key,
+        stored.url,
+        stored.content_type,
+        stored.size,
+    )
+    return stored
 
 
 async def _persist_slide_outputs(
     results: list[SlideRenderResult],
     session_id: str,
     total_slides: int,
+    asset_run_id: str,
 ) -> tuple[list[dict], list[dict]]:
     slide_files: list[dict] = []
     progress_events: list[dict] = []
@@ -477,8 +501,17 @@ async def _persist_slide_outputs(
             artifact_filename = f"slide_{result.slide_index + 1:03d}{Path(result.output_path).suffix}"
             stored_artifact = await _upload_file_to_object_storage(
                 result.output_path,
-                _build_object_key(session_id, "slides", artifact_filename),
+                _build_object_key(session_id, asset_run_id, "slides", artifact_filename),
                 _slide_content_type(result),
+            )
+            await record_stored_asset(
+                session_id,
+                "slide_artifact",
+                stored_artifact.key,
+                stored_artifact.url,
+                stored_artifact.content_type,
+                stored_artifact.size,
+                slide_number=result.slide_index + 1,
             )
             slide_file = {
                 "page_number": result.slide_index + 1,
@@ -498,10 +531,20 @@ async def _persist_slide_outputs(
                         thumbnail_path,
                         _build_object_key(
                             session_id,
+                            asset_run_id,
                             "thumbnails",
                             f"thumb_{result.slide_index + 1:03d}.jpg",
                         ),
                         "image/jpeg",
+                    )
+                    await record_stored_asset(
+                        session_id,
+                        "thumbnail",
+                        stored_thumbnail.key,
+                        stored_thumbnail.url,
+                        stored_thumbnail.content_type,
+                        stored_thumbnail.size,
+                        slide_number=result.slide_index + 1,
                     )
                     thumbnail_url = stored_thumbnail.url
                     slide_file["thumbnail_storage_key"] = stored_thumbnail.key

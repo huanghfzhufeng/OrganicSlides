@@ -121,6 +121,28 @@ class JobEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class StoredAsset(Base):
+    """对象存储资产元数据表"""
+    __tablename__ = "stored_assets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True)
+    session_id = Column(String(36), nullable=False, index=True)
+
+    asset_type = Column(String(50), nullable=False, index=True)
+    object_key = Column(String(255), nullable=False, unique=True, index=True)
+    public_url = Column(String(1024), nullable=False)
+    content_type = Column(String(255), nullable=False)
+    size_bytes = Column(Integer, nullable=False, default=0)
+    slide_number = Column(Integer, nullable=True)
+    status = Column(String(50), nullable=False, default="active", index=True)
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+
+
 class Slide(Base):
     """幻灯片表"""
     __tablename__ = "slides"
