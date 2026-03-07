@@ -52,7 +52,8 @@ Examples:
   Validation completed on `2026-03-07` with Pydantic runtime schemas wired into state initialization, Researcher, Planner, Writer, Visual, RenderPrep, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [x] `REQ-011` Build the `StylePacket` assembler from style JSON, references, prompt constraints, and sample assets.
   Validation completed on `2026-03-07` with assembled StylePacket references/constraints/assets, tracked huashu reference sources, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-012` Upgrade researcher retrieval so `huashu-slides` references are actually retrievable for Chinese and English prompts.
+- [x] `REQ-012` Upgrade researcher retrieval so `huashu-slides` references are actually retrievable for Chinese and English prompts.
+  Validation completed on `2026-03-07` with bilingual query expansion for huashu references and uploaded docs, `tests/unit/test_reference_retrieval.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-013` Inject `StylePacket` into planner prompts and validation.
 - [ ] `REQ-014` Inject `StylePacket` into writer prompts and validation.
 - [ ] `REQ-015` Inject `StylePacket` into visual prompts and validation.
