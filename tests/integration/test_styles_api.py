@@ -36,6 +36,16 @@ class TestStylesAPI:
         self.revisions = []
         self.active_job = None
         self.failure_summary = None
+        self.job_lookup = {}
+        self.job_events = {}
+        self.job_failures = {}
+        self.failed_jobs = []
+        self.session_jobs = {}
+        self.operator_user = type(
+            "OperatorUser",
+            (),
+            {"email": "ops@example.com", "username": "ops", "is_active": True},
+        )()
 
         async def fake_load_session_state(session_id):
             return self.session_store.get(session_id)
@@ -146,6 +156,26 @@ class TestStylesAPI:
                 return dict(self.failure_summary)
             return None
 
+        async def fake_get_generation_job(job_id):
+            job = self.job_lookup.get(job_id)
+            return dict(job) if job else None
+
+        async def fake_list_job_events(job_id):
+            return [dict(event) for event in self.job_events.get(job_id, [])]
+
+        async def fake_get_generation_failure_for_job(job_id):
+            failure = self.job_failures.get(job_id)
+            return dict(failure) if failure else None
+
+        async def fake_list_failed_generation_jobs(limit=20):
+            return [dict(job) for job in self.failed_jobs[:limit]]
+
+        async def fake_list_session_generation_jobs(session_id, limit=10):
+            return [dict(job) for job in self.session_jobs.get(session_id, [])[:limit]]
+
+        async def fake_get_current_operator_user():
+            return self.operator_user
+
         monkeypatch.setattr(main, "_load_session_state", fake_load_session_state)
         monkeypatch.setattr(main, "_save_session_state", fake_save_session_state)
         monkeypatch.setattr(main, "_merge_session_state", fake_merge_session_state)
@@ -155,6 +185,12 @@ class TestStylesAPI:
         monkeypatch.setattr(main, "restore_project_revision_snapshot", fake_restore_project_revision)
         monkeypatch.setattr(main, "find_session_active_generation_job", fake_find_session_active_generation_job)
         monkeypatch.setattr(main, "get_generation_failure", fake_get_generation_failure)
+        monkeypatch.setattr(main, "get_generation_job", fake_get_generation_job)
+        monkeypatch.setattr(main, "list_job_events", fake_list_job_events)
+        monkeypatch.setattr(main, "get_generation_failure_for_job", fake_get_generation_failure_for_job)
+        monkeypatch.setattr(main, "list_failed_generation_jobs", fake_list_failed_generation_jobs)
+        monkeypatch.setattr(main, "list_session_generation_jobs", fake_list_session_generation_jobs)
+        self.app.dependency_overrides[main.get_current_operator_user] = fake_get_current_operator_user
 
         yield
 
@@ -578,6 +614,211 @@ class TestStylesAPI:
 
         assert response.status_code == 409
         assert response.json()["detail"] == "会话不存在，无法继续重试"
+
+    def test_operator_failed_jobs_endpoint_returns_recent_failures(self):
+        """Operator failed-jobs endpoint should surface triage summaries"""
+        self.failed_jobs = [
+            {
+                "job_id": "job-failed-1",
+                "session_id": "session-1",
+                "trigger": "resume_workflow",
+                "status": "error",
+                "current_agent": "visual",
+                "error_type": "visual_failed",
+                "failure_stage": "visual",
+                "message": "visual 阶段失败，请修正后重试",
+                "technical_message": "visual parse failed",
+                "recoverable": True,
+                "retry_available": True,
+                "retry_trigger": "resume_workflow",
+                "details": {"agent": "visual"},
+                "failed_at": "2026-03-07T00:00:10Z",
+            }
+        ]
+
+        response = self.client.get("/api/v1/operator/jobs/failed")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["operator"] == "ops@example.com"
+        assert payload["total"] == 1
+        assert payload["jobs"][0]["job_id"] == "job-failed-1"
+
+    def test_operator_job_detail_endpoint_returns_job_failure_and_events(self):
+        """Operator job detail endpoint should return persisted job context"""
+        self.job_lookup["job-failed-2"] = {
+            "job_id": "job-failed-2",
+            "session_id": "session-2",
+            "trigger": "resume_workflow",
+            "status": "error",
+            "current_agent": "renderer",
+            "error_message": "renderer failed",
+            "pptx_path": "",
+            "created_at": "2026-03-07T00:00:11Z",
+            "updated_at": "2026-03-07T00:00:12Z",
+        }
+        self.job_failures["job-failed-2"] = {
+            "job_id": "job-failed-2",
+            "session_id": "session-2",
+            "trigger": "resume_workflow",
+            "status": "error",
+            "current_agent": "renderer",
+            "error_type": "renderer_failed",
+            "failure_stage": "renderer",
+            "message": "renderer 阶段失败，请修正后重试",
+            "technical_message": "renderer failed",
+            "recoverable": True,
+            "retry_available": True,
+            "retry_trigger": "resume_workflow",
+            "details": {"agent": "renderer"},
+            "failed_at": "2026-03-07T00:00:12Z",
+        }
+        self.job_events["job-failed-2"] = [
+            {
+                "event_id": "event-1",
+                "job_id": "job-failed-2",
+                "session_id": "session-2",
+                "event_type": "status",
+                "agent": "visual",
+                "status": "visual_complete",
+                "message": "Visual done",
+                "payload": {"type": "status"},
+                "created_at": "2026-03-07T00:00:11Z",
+            }
+        ]
+
+        response = self.client.get("/api/v1/operator/jobs/job-failed-2")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["job"]["job_id"] == "job-failed-2"
+        assert payload["failure"]["error_type"] == "renderer_failed"
+        assert payload["events"][0]["event_id"] == "event-1"
+
+    def test_operator_support_snapshot_returns_preview_history_and_jobs(self):
+        """Operator support snapshot should aggregate preview, revisions, jobs, and events"""
+        project = self._create_project(prompt="Operator support snapshot")
+        session_id = project["session_id"]
+        self.session_store[session_id].update(
+            {
+                "current_status": "render_failed",
+                "current_agent": "renderer",
+                "error": "renderer failed",
+                "outline": [{"id": "1", "title": "断言一", "type": "content"}],
+                "slide_render_plans": [{"page_number": 1, "title": "断言一", "render_path": "path_b"}],
+                "slide_files": [
+                    {
+                        "page_number": 1,
+                        "title": "断言一",
+                        "render_path": "path_b",
+                        "type": "image",
+                        "path": "http://localhost/assets/slide_001.png",
+                        "thumbnail_url": "http://localhost/assets/thumb_001.jpg",
+                    }
+                ],
+                "render_progress": [{"slide_number": 1, "render_path": "path_b", "status": "failed"}],
+            }
+        )
+        self.failure_summary = {
+            "job_id": "job-failed-3",
+            "session_id": session_id,
+            "trigger": "resume_workflow",
+            "status": "error",
+            "current_agent": "renderer",
+            "error_type": "renderer_failed",
+            "failure_stage": "renderer",
+            "message": "renderer 阶段失败，请修正后重试",
+            "technical_message": "renderer failed",
+            "recoverable": True,
+            "retry_available": True,
+            "retry_trigger": "resume_workflow",
+            "details": {"agent": "renderer"},
+            "failed_at": "2026-03-07T00:00:13Z",
+        }
+        self.session_jobs[session_id] = [
+            {
+                "job_id": "job-failed-3",
+                "session_id": session_id,
+                "trigger": "resume_workflow",
+                "status": "error",
+                "current_agent": "renderer",
+                "error_message": "renderer failed",
+                "pptx_path": "",
+                "created_at": "2026-03-07T00:00:12Z",
+                "updated_at": "2026-03-07T00:00:13Z",
+                "completed_at": "2026-03-07T00:00:13Z",
+            }
+        ]
+        self.job_events["job-failed-3"] = [
+            {
+                "event_id": "event-2",
+                "job_id": "job-failed-3",
+                "session_id": session_id,
+                "event_type": "error",
+                "agent": "renderer",
+                "status": "error",
+                "message": "renderer failed",
+                "payload": {"type": "error"},
+                "created_at": "2026-03-07T00:00:13Z",
+            }
+        ]
+
+        response = self.client.get(f"/api/v1/operator/sessions/{session_id}/support")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["preview"]["slides_count"] == 1
+        assert payload["failure"]["job_id"] == "job-failed-3"
+        assert payload["jobs"][0]["job_id"] == "job-failed-3"
+        assert payload["latest_job_events"][0]["event_id"] == "event-2"
+
+    def test_operator_retry_and_restore_actions_use_support_paths(self, monkeypatch):
+        """Operator retry and restore endpoints should expose support actions"""
+        project = self._create_project(prompt="Operator actions test")
+        session_id = project["session_id"]
+        self.job_lookup["job-failed-4"] = {
+            "job_id": "job-failed-4",
+            "session_id": session_id,
+            "trigger": "resume_workflow",
+            "status": "error",
+            "current_agent": "renderer",
+            "error_message": "renderer failed",
+            "pptx_path": "",
+            "created_at": "2026-03-07T00:00:14Z",
+            "updated_at": "2026-03-07T00:00:15Z",
+        }
+
+        async def fake_enqueue_worker_job(session_id_param, trigger):
+            assert session_id_param == session_id
+            assert trigger == "resume_workflow"
+            return {"job_id": "job-requeued", "status": "queued", "trigger": trigger}
+
+        monkeypatch.setattr(self.main, "_enqueue_worker_job", fake_enqueue_worker_job)
+
+        retry_response = self.client.post("/api/v1/operator/jobs/job-failed-4/retry")
+        assert retry_response.status_code == 200
+        assert retry_response.json()["job_id"] == "job-requeued"
+
+        original_outline = [{"id": "1", "title": "原始断言", "type": "content"}]
+        updated_outline = [{"id": "1", "title": "更新断言", "type": "content"}]
+        awaitable_create = self.client.post(
+            "/api/v1/workflow/outline/update",
+            json={"session_id": session_id, "outline": original_outline, "access_token": project["session_access_token"]},
+        )
+        assert awaitable_create.status_code == 200
+        awaitable_update = self.client.post(
+            "/api/v1/workflow/outline/update",
+            json={"session_id": session_id, "outline": updated_outline, "access_token": project["session_access_token"]},
+        )
+        assert awaitable_update.status_code == 200
+
+        restore_response = self.client.post(
+            f"/api/v1/operator/sessions/{session_id}/restore",
+            json={"revision_number": 2},
+        )
+        assert restore_response.status_code == 200
+        assert restore_response.json()["status"] == "revision_restored"
+        assert restore_response.json()["current_state"]["outline"] == original_outline
 
     def test_project_create_with_custom_style(self):
         """Test creating project with different styles"""

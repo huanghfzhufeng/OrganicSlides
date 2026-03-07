@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = _DEFAULT_JWT_SECRET
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 小时
+    OPERATOR_EMAILS: str = ""
 
     # 大模型 API
     OPENAI_API_KEY: Optional[str] = None

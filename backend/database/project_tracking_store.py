@@ -352,6 +352,34 @@ async def get_generation_job(job_id: Union[str, uuid.UUID]) -> Optional[dict]:
         }
 
 
+async def list_session_generation_jobs(session_id: str, limit: int = 10) -> list[dict]:
+    """List recent generation jobs for a workflow session."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(GenerationJob)
+            .where(GenerationJob.session_id == session_id)
+            .order_by(GenerationJob.created_at.desc())
+            .limit(limit)
+        )
+        jobs = result.scalars().all()
+        return [
+            {
+                "job_id": str(job.id),
+                "session_id": job.session_id,
+                "project_id": str(job.project_id) if job.project_id else None,
+                "trigger": job.trigger,
+                "status": job.status,
+                "current_agent": job.current_agent,
+                "error_message": job.error_message,
+                "pptx_path": job.pptx_path or "",
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+                "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            }
+            for job in jobs
+        ]
+
+
 async def find_active_generation_job(session_id: str, trigger: str) -> Optional[dict]:
     """Return the most recent non-terminal job for a session/trigger pair."""
     async with AsyncSessionLocal() as db:
@@ -529,13 +557,42 @@ async def list_job_events(job_id: Union[str, uuid.UUID]) -> list[dict]:
         ]
 
 
-async def get_generation_failure(session_id: str) -> Optional[dict]:
-    """Build a user-facing failure summary from the latest failed job and its error event."""
-    failed_job = await get_latest_failed_generation_job(session_id)
-    if failed_job is None:
+def _build_failure_summary(
+    job: dict,
+    payload: Optional[dict] = None,
+    failed_at: Optional[str] = None,
+) -> dict:
+    payload = dict(payload or {})
+    return {
+        "job_id": job["job_id"],
+        "session_id": job["session_id"],
+        "trigger": payload.get("retry_trigger") or job["trigger"],
+        "status": job["status"],
+        "current_agent": job["current_agent"],
+        "error_type": payload.get("error_type", "generation_failed"),
+        "failure_stage": payload.get("failure_stage") or job["current_agent"] or "workflow",
+        "message": payload.get("user_message")
+        or payload.get("message")
+        or job.get("error_message")
+        or "Generation failed",
+        "technical_message": payload.get("message")
+        or job.get("error_message")
+        or "Generation failed",
+        "recoverable": payload.get("recoverable", True),
+        "retry_available": payload.get("retry_available", True),
+        "retry_trigger": payload.get("retry_trigger") or job["trigger"],
+        "details": payload.get("details", {}),
+        "failed_at": failed_at or job["updated_at"],
+    }
+
+
+async def get_generation_failure_for_job(job_id: Union[str, uuid.UUID]) -> Optional[dict]:
+    """Build a failure summary for a specific failed generation job."""
+    job = await get_generation_job(job_id)
+    if job is None or job["status"] != "error":
         return None
 
-    events = await list_job_events(failed_job["job_id"])
+    events = await list_job_events(job["job_id"])
     error_event = next(
         (
             event
@@ -545,25 +602,33 @@ async def get_generation_failure(session_id: str) -> Optional[dict]:
         None,
     )
     payload = dict(error_event.get("payload") or {}) if error_event else {}
+    failed_at = error_event["created_at"] if error_event else job["updated_at"]
+    return _build_failure_summary(job, payload=payload, failed_at=failed_at)
 
-    return {
-        "job_id": failed_job["job_id"],
-        "session_id": session_id,
-        "trigger": payload.get("retry_trigger") or failed_job["trigger"],
-        "status": failed_job["status"],
-        "current_agent": failed_job["current_agent"],
-        "error_type": payload.get("error_type", "generation_failed"),
-        "failure_stage": payload.get("failure_stage") or failed_job["current_agent"] or "workflow",
-        "message": payload.get("user_message")
-        or payload.get("message")
-        or failed_job.get("error_message")
-        or "Generation failed",
-        "technical_message": payload.get("message")
-        or failed_job.get("error_message")
-        or "Generation failed",
-        "recoverable": payload.get("recoverable", True),
-        "retry_available": payload.get("retry_available", True),
-        "retry_trigger": payload.get("retry_trigger") or failed_job["trigger"],
-        "details": payload.get("details", {}),
-        "failed_at": error_event["created_at"] if error_event else failed_job["updated_at"],
-    }
+
+async def get_generation_failure(session_id: str) -> Optional[dict]:
+    """Build a user-facing failure summary from the latest failed job and its error event."""
+    failed_job = await get_latest_failed_generation_job(session_id)
+    if failed_job is None:
+        return None
+
+    return await get_generation_failure_for_job(failed_job["job_id"])
+
+
+async def list_failed_generation_jobs(limit: int = 20) -> list[dict]:
+    """List recent failed generation jobs with user-facing failure summaries."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(GenerationJob)
+            .where(GenerationJob.status == "error")
+            .order_by(GenerationJob.updated_at.desc(), GenerationJob.created_at.desc())
+            .limit(limit)
+        )
+        jobs = result.scalars().all()
+
+    failures: list[dict] = []
+    for job in jobs:
+        failure = await get_generation_failure_for_job(str(job.id))
+        if failure is not None:
+            failures.append(failure)
+    return failures
