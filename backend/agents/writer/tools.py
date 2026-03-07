@@ -170,6 +170,44 @@ def validate_slides_content(
     return True, "验证通过"
 
 
+def evaluate_slide_quality(
+    slides: List[Dict[str, Any]],
+    outline: List[Dict[str, Any]] | None = None,
+    style_config: dict | None = None,
+) -> tuple[bool, str]:
+    """Apply higher-signal writer quality gates before slides move downstream."""
+    outline = outline or []
+    if outline and len(slides) != len(outline):
+        return False, f"幻灯片数量 {len(slides)} 与大纲数量 {len(outline)} 不一致"
+
+    for index, slide in enumerate(slides):
+        page = index + 1
+        outline_section = outline[index] if index < len(outline) else {}
+        expected_title = str(outline_section.get("title") or "").strip()
+        slide_title = str(slide.get("title") or "").strip()
+
+        if expected_title and slide_title != expected_title:
+            return False, f"第 {page} 页标题必须保留大纲断言句标题"
+
+        content = slide.get("content", {}) or {}
+        bullet_points = content.get("bullet_points", []) or []
+        for bullet in bullet_points:
+            if _text_length(bullet) > 12:
+                return False, f"第 {page} 页 bullet_points 必须控制在 12 字以内"
+
+        text_to_render = slide.get("text_to_render", {}) or {}
+        render_title = str(text_to_render.get("title") or "").strip()
+        if _requires_short_render_title(slide, style_config) and _contains_cjk(render_title):
+            if _text_length(render_title) > 8:
+                return False, f"第 {page} 页 text_to_render.title 必须控制在 8 个中文字以内"
+
+        for bullet in text_to_render.get("bullets", []) or []:
+            if _text_length(bullet) > 12:
+                return False, f"第 {page} 页 text_to_render.bullets 必须控制在 12 字以内"
+
+    return True, "验证通过"
+
+
 def create_default_slides_from_outline(outline: List[Dict]) -> List[Dict]:
     """基于大纲创建默认幻灯片内容，包含新字段"""
     slides = []
@@ -258,3 +296,25 @@ def _summarize_design_principles(content: str) -> str:
     if len(compact) > 240:
         return compact[:240].rstrip() + "..."
     return compact
+
+
+def _text_length(text: Any) -> int:
+    return len("".join(str(text).split()))
+
+
+def _requires_short_render_title(slide: Dict[str, Any], style_config: dict | None = None) -> bool:
+    path_hint = slide.get("path_hint", "auto")
+    visual_type = slide.get("visual_type", "illustration")
+    supported_render_paths = effective_render_paths(style_config)
+
+    if path_hint == "path_b":
+        return True
+    if path_hint == "path_a":
+        return False
+    if len(supported_render_paths) == 1 and supported_render_paths[0] == "path_b":
+        return True
+    return visual_type in {"illustration", "cover", "quote"}
+
+
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in str(text))
