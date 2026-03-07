@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
+from config import settings
 from database.project_tracking_store import (
-    create_generation_job,
+    claim_next_generation_job,
     create_project_revision,
-    find_active_generation_job,
     record_job_event,
     sync_project_state,
     update_generation_job,
@@ -19,9 +19,6 @@ from database.workflow_state_store import (
     update_workflow_state,
 )
 from graph import get_main_app, get_resume_app
-
-
-_ACTIVE_TASKS: set[asyncio.Task] = set()
 
 
 def _workflow_failed(state: Optional[dict]) -> bool:
@@ -57,43 +54,30 @@ async def _merge_session_state(session_id: str, updates: dict) -> Optional[dict]
     return persisted
 
 
-async def start_worker_job(session_id: str, trigger: str) -> dict:
-    """Create a worker-owned generation job and schedule it asynchronously."""
-    active_job = await find_active_generation_job(session_id, trigger)
-    if active_job is not None:
-        return {
-            "job_id": active_job["job_id"],
-            "status": "already_running",
-            "trigger": trigger,
-        }
+async def consume_generation_queue(stop_event: Optional[asyncio.Event] = None) -> None:
+    """Continuously claim queued jobs and execute them inside the worker process."""
+    while stop_event is None or not stop_event.is_set():
+        job = await claim_next_generation_job()
+        if job is None:
+            await asyncio.sleep(settings.WORKER_QUEUE_POLL_INTERVAL_SECONDS)
+            continue
 
-    state = await _load_session_state(session_id)
-    if not state:
-        raise ValueError("Session not found")
-
-    job = await create_generation_job(session_id, trigger, dict(state))
-    await update_generation_job(job["job_id"], state=state, status="queued")
-    await record_job_event(
-        session_id,
-        "status",
-        {
-            "type": "status",
-            "agent": "worker",
-            "status": "queued",
-            "message": f"Worker accepted job for {trigger}",
-        },
-        job_id=job["job_id"],
-    )
-
-    task = asyncio.create_task(execute_generation_job(session_id, job["job_id"], trigger))
-    _ACTIVE_TASKS.add(task)
-    task.add_done_callback(_ACTIVE_TASKS.discard)
-
-    return {
-        "job_id": job["job_id"],
-        "status": "queued",
-        "trigger": trigger,
-    }
+        await record_job_event(
+            job["session_id"],
+            "status",
+            {
+                "type": "status",
+                "agent": "worker",
+                "status": "starting",
+                "message": f"Worker claimed queued job for {job['trigger']}",
+            },
+            job_id=job["job_id"],
+        )
+        await execute_generation_job(
+            job["session_id"],
+            job["job_id"],
+            job["trigger"],
+        )
 
 
 async def execute_generation_job(session_id: str, job_id: str, trigger: str) -> None:

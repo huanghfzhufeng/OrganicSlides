@@ -44,8 +44,6 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    environment:
-      WORKER_BASE_URL: http://worker:8001
     ports:
       - "8000:8000"
     volumes:

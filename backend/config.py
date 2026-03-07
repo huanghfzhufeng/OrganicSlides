@@ -32,8 +32,7 @@ class Settings(BaseSettings):
     # 应用配置
     APP_ENV: str = "development"
     DEBUG: bool = True
-    WORKER_BASE_URL: str = "http://127.0.0.1:8001"
-    WORKER_REQUEST_TIMEOUT_SECONDS: int = 10
+    WORKER_QUEUE_POLL_INTERVAL_SECONDS: float = 1.0
 
     class Config:
         env_file = "../.env"  # 从项目根目录读取

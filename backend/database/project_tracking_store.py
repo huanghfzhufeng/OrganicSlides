@@ -124,6 +124,7 @@ async def create_generation_job(
     trigger: str,
     state: dict,
     project_id: Identifier = None,
+    status: Optional[str] = None,
 ) -> dict:
     """Create a generation job record for a workflow run."""
     async with AsyncSessionLocal() as db:
@@ -132,7 +133,7 @@ async def create_generation_job(
             project_id=resolved_project_id,
             session_id=session_id,
             trigger=trigger,
-            status=state.get("current_status", "created"),
+            status=status or state.get("current_status", "created"),
             current_agent=state.get("current_agent", ""),
             pptx_path=state.get("pptx_path") or None,
         )
@@ -259,6 +260,34 @@ async def find_active_generation_job(session_id: str, trigger: str) -> Optional[
             "job_id": str(job.id),
             "status": job.status,
             "trigger": job.trigger,
+            "current_agent": job.current_agent,
+        }
+
+
+async def claim_next_generation_job() -> Optional[dict]:
+    """Claim the next queued job using row-level locking."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(GenerationJob)
+            .where(GenerationJob.status == "queued")
+            .order_by(GenerationJob.created_at.asc())
+            .with_for_update(skip_locked=True)
+            .limit(1)
+        )
+        job = result.scalars().first()
+        if job is None:
+            return None
+
+        job.status = "starting"
+        job.started_at = datetime.utcnow()
+        await db.commit()
+
+        return {
+            "job_id": str(job.id),
+            "session_id": job.session_id,
+            "project_id": str(job.project_id) if job.project_id else None,
+            "trigger": job.trigger,
+            "status": job.status,
             "current_agent": job.current_agent,
         }
 

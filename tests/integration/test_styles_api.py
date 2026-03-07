@@ -262,10 +262,16 @@ class TestStylesAPI:
         session_id = project["session_id"]
         access_token = project["session_access_token"]
 
-        async def fake_generate_sse_events(session_id_param, state):
+        async def fake_generate_sse_events(job_id):
             yield "data: {\"type\":\"complete\",\"status\":\"done\"}\n\n"
 
+        async def fake_enqueue_worker_job(session_id_param, trigger):
+            assert session_id_param == session_id
+            assert trigger == "start_workflow"
+            return {"job_id": "job-1", "status": "queued", "trigger": trigger}
+
         monkeypatch.setattr(self.main, "generate_sse_events", fake_generate_sse_events)
+        monkeypatch.setattr(self.main, "_enqueue_worker_job", fake_enqueue_worker_job)
 
         response = self.client.get(
             f"/api/v1/workflow/start/{session_id}",
