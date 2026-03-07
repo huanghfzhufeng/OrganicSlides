@@ -33,6 +33,7 @@ class TestStylesAPI:
         self.monkeypatch = monkeypatch
         self.session_store = {}
         self.revisions = []
+        self.active_job = None
 
         async def fake_load_session_state(session_id):
             return self.session_store.get(session_id)
@@ -50,19 +51,100 @@ class TestStylesAPI:
             return merged
 
         async def fake_create_project_revision(session_id, revision_type, state, project_id=None):
+            revision_number = (
+                sum(1 for revision in self.revisions if revision["session_id"] == session_id) + 1
+            )
             revision = {
+                "revision_id": f"revision-{session_id}-{revision_number}",
                 "session_id": session_id,
+                "revision_number": revision_number,
                 "revision_type": revision_type,
                 "state": dict(state),
                 "project_id": project_id,
+                "status": state.get("current_status", "unknown"),
+                "theme": (state.get("theme_config", {}) or {}).get("style") or state.get("style_id"),
+                "outline": list(state.get("outline", [])),
+                "outline_count": len(state.get("outline", [])),
+                "created_at": f"2026-03-07T00:00:{revision_number:02d}Z",
+                "restored_from_revision_number": state.get("last_restored_revision_number"),
             }
             self.revisions.append(revision)
             return revision
+
+        async def fake_list_project_revisions(session_id, limit=20):
+            revisions = [revision for revision in self.revisions if revision["session_id"] == session_id]
+            revisions.sort(key=lambda revision: revision["revision_number"], reverse=True)
+            return [
+                {
+                    "revision_id": revision["revision_id"],
+                    "project_id": revision["project_id"],
+                    "session_id": revision["session_id"],
+                    "revision_number": revision["revision_number"],
+                    "revision_type": revision["revision_type"],
+                    "status": revision["status"],
+                    "theme": revision["theme"],
+                    "outline": list(revision["outline"]),
+                    "outline_count": revision["outline_count"],
+                    "created_at": revision["created_at"],
+                    "restored_from_revision_number": revision["restored_from_revision_number"],
+                }
+                for revision in revisions[:limit]
+            ]
+
+        async def fake_count_project_revisions(session_id):
+            return sum(1 for revision in self.revisions if revision["session_id"] == session_id)
+
+        async def fake_restore_project_revision(session_id, revision_number=None, revision_id=None):
+            target = None
+            for revision in self.revisions:
+                if revision["session_id"] != session_id:
+                    continue
+                if revision_number is not None and revision["revision_number"] == revision_number:
+                    target = revision
+                    break
+                if revision_id is not None and revision["revision_id"] == revision_id:
+                    target = revision
+                    break
+
+            if target is None:
+                return None
+
+            restored_state = {
+                **target["state"],
+                "session_id": session_id,
+                "last_restored_revision_id": target["revision_id"],
+                "last_restored_revision_number": target["revision_number"],
+            }
+            restored_state.pop("error", None)
+            self.session_store[session_id] = restored_state
+            restoration_revision = await fake_create_project_revision(
+                session_id,
+                "revision_restored",
+                restored_state,
+                project_id=target["project_id"],
+            )
+            return {
+                "restored_revision": {
+                    **target,
+                    "state_snapshot": dict(target["state"]),
+                },
+                "restoration_revision": restoration_revision,
+                "state": restored_state,
+            }
+
+        async def fake_find_session_active_generation_job(session_id):
+            if self.active_job and self.active_job["session_id"] == session_id:
+                return dict(self.active_job)
+            return None
 
         monkeypatch.setattr(main, "_load_session_state", fake_load_session_state)
         monkeypatch.setattr(main, "_save_session_state", fake_save_session_state)
         monkeypatch.setattr(main, "_merge_session_state", fake_merge_session_state)
         monkeypatch.setattr(main, "create_project_revision", fake_create_project_revision)
+        monkeypatch.setattr(main, "count_project_revisions", fake_count_project_revisions)
+        monkeypatch.setattr(main, "list_project_revisions", fake_list_project_revisions)
+        monkeypatch.setattr(main, "restore_project_revision_snapshot", fake_restore_project_revision)
+        monkeypatch.setattr(main, "find_session_active_generation_job", fake_find_session_active_generation_job)
 
         yield
 
@@ -233,6 +315,104 @@ class TestStylesAPI:
         assert self.session_store[session_id]["style_packet"]["render_paths"] == ["path_a"]
         assert self.session_store[session_id]["style_packet"]["reference_sources"]
         assert self.session_store[session_id]["style_packet"]["prompt_constraints"]["path_a_rules"]
+
+    def test_list_project_revisions_returns_reverse_chronological_history(self):
+        """Revision history endpoint should return the latest revisions first"""
+        project = self._create_project(prompt="Revision list test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+
+        outline = [{"id": "1", "title": "Assertion slide", "type": "content"}]
+        self.client.post(
+            "/api/v1/workflow/outline/update",
+            json={"session_id": session_id, "outline": outline, "access_token": access_token},
+        )
+        self.client.post(
+            "/api/v1/project/style",
+            json={
+                "session_id": session_id,
+                "style_id": "01-snoopy",
+                "render_path_preference": "path_a",
+                "access_token": access_token,
+            },
+        )
+
+        response = self.client.get(
+            f"/api/v1/project/revisions/{session_id}",
+            params={"access_token": access_token},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["total"] == 3
+        assert [revision["revision_type"] for revision in payload["revisions"]] == [
+            "style_updated",
+            "outline_updated",
+            "project_created",
+        ]
+        assert payload["revisions"][0]["revision_number"] == 3
+
+    def test_restore_project_revision_replaces_session_state_and_records_restoration(self):
+        """Restoring a revision should replace current state and append a restoration revision"""
+        project = self._create_project(prompt="Revision restore test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+
+        original_outline = [{"id": "1", "title": "Original assertion", "type": "content"}]
+        updated_outline = [{"id": "1", "title": "Updated assertion", "type": "content"}]
+
+        self.client.post(
+            "/api/v1/workflow/outline/update",
+            json={"session_id": session_id, "outline": original_outline, "access_token": access_token},
+        )
+        self.client.post(
+            "/api/v1/workflow/outline/update",
+            json={"session_id": session_id, "outline": updated_outline, "access_token": access_token},
+        )
+
+        response = self.client.post(
+            "/api/v1/project/revisions/restore",
+            json={
+                "session_id": session_id,
+                "revision_number": 2,
+                "access_token": access_token,
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "revision_restored"
+        assert payload["restored_revision"]["revision_number"] == 2
+        assert payload["restoration_revision"]["revision_type"] == "revision_restored"
+        assert payload["current_state"]["outline"] == original_outline
+        assert self.session_store[session_id]["outline"] == original_outline
+        assert self.session_store[session_id]["last_restored_revision_number"] == 2
+        assert self.revisions[-1]["revision_type"] == "revision_restored"
+        assert self.revisions[-1]["restored_from_revision_number"] == 2
+
+    def test_restore_project_revision_rejects_active_generation_job(self):
+        """Revision restore should be blocked while a generation job is active"""
+        project = self._create_project(prompt="Active restore guard test")
+        session_id = project["session_id"]
+        access_token = project["session_access_token"]
+        self.active_job = {
+            "job_id": "job-1",
+            "session_id": session_id,
+            "status": "running",
+            "trigger": "resume_workflow",
+        }
+
+        response = self.client.post(
+            "/api/v1/project/revisions/restore",
+            json={
+                "session_id": session_id,
+                "revision_number": 1,
+                "access_token": access_token,
+            },
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Cannot restore revisions while a generation job is active"
 
     def test_project_create_with_custom_style(self):
         """Test creating project with different styles"""
