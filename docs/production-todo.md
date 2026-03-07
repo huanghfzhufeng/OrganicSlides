@@ -56,7 +56,8 @@ Examples:
   Validation completed on `2026-03-07` with bilingual query expansion for huashu references and uploaded docs, `tests/unit/test_reference_retrieval.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [x] `REQ-013` Inject `StylePacket` into planner prompts and validation.
   Validation completed on `2026-03-07` with StylePacket-driven planner context, style-aware outline validation/repair, `tests/unit/test_planner_style_packet.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
-- [ ] `REQ-014` Inject `StylePacket` into writer prompts and validation.
+- [x] `REQ-014` Inject `StylePacket` into writer prompts and validation.
+  Validation completed on `2026-03-07` with StylePacket-driven writer context, path-aware writer validation, `tests/unit/test_writer_style_packet.py`, `pytest -q`, `frontend/npm run build`, and `frontend/npm test -- --run`.
 - [ ] `REQ-015` Inject `StylePacket` into visual prompts and validation.
 - [ ] `REQ-016` Add writer quality gate and repair loop.
 - [ ] `REQ-017` Add visual quality gate and repair loop.

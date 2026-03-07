@@ -4,6 +4,8 @@
 
 from typing import List, Dict, Any, Optional
 
+from rendering_policy import effective_render_paths, get_render_path_preference
+
 
 def format_outline_for_prompt(outline: List[Dict]) -> str:
     """将大纲格式化为提示语，包含 visual_type 和 path_hint"""
@@ -42,27 +44,72 @@ def format_docs_for_context(source_docs: List[Dict], max_docs: int = 3) -> str:
     return f"<参考资料>\n{docs_text}\n</参考资料>"
 
 
-def build_style_context(style_id: str, style_config: dict) -> str:
-    """构建风格上下文文本，供 Writer 了解 image_prompt 方向"""
+def build_style_context(style_config: dict) -> str:
+    """构建风格上下文文本，供 Writer 使用完整 StylePacket。"""
     if not style_config:
         return "未指定风格"
 
-    name = style_config.get("name_zh") or style_config.get("name_en", style_id)
-    render_paths = style_config.get("render_paths", ["path_a"])
-    base_prompt = style_config.get("base_style_prompt")
+    name = (
+        style_config.get("name_zh")
+        or style_config.get("name_en")
+        or style_config.get("style_id")
+        or style_config.get("id")
+        or "默认风格"
+    )
+    render_paths = effective_render_paths(style_config)
+    render_preference = get_render_path_preference(style_config)
+    base_prompt = style_config.get("base_style_prompt", "")
+    description = style_config.get("description", "")
+    key_principles = style_config.get("key_principles", [])
+    prompt_constraints = style_config.get("prompt_constraints", {})
+    sample_asset_path = style_config.get("sample_asset_path", "")
 
     lines = [f"当前风格：{name}"]
-    lines.append(f"渲染路径：{', '.join(render_paths)}")
+    lines.append(f"支持渲染路径：{', '.join(render_paths)}")
+    if render_preference != "auto":
+        lines.append(f"强制渲染偏好：{render_preference}")
+    if description:
+        lines.append(f"风格描述：{description}")
+    if key_principles:
+        lines.append(f"关键原则：{'; '.join(key_principles[:5])}")
 
     if base_prompt:
-        # Show a short excerpt of the base style prompt
         excerpt = base_prompt[:200] + "..." if len(base_prompt) > 200 else base_prompt
-        lines.append(f"风格基础描述（供 image_prompt 参考）：\n{excerpt}")
+        lines.append(f"风格基础描述：{excerpt}")
+
+    for title, content in [
+        ("风格参考摘要", style_config.get("reference_summary", "")),
+        ("设计运动摘录", style_config.get("movement_excerpt", "")),
+    ]:
+        block = _format_optional_block(title, content)
+        if block:
+            lines.append(block)
+
+    design_principles_summary = _summarize_design_principles(
+        style_config.get("design_principles_excerpt", "")
+    )
+    if design_principles_summary:
+        lines.append(f"设计原则重点：{design_principles_summary}")
+
+    path_b_forbidden_terms = prompt_constraints.get("path_b_forbidden_terms", [])
+    if path_b_forbidden_terms:
+        lines.append(f"Path B 禁用词：{', '.join(path_b_forbidden_terms)}")
+    path_b_required_sections = prompt_constraints.get("path_b_required_sections", [])
+    if path_b_required_sections:
+        lines.append(f"Path B prompt 必须覆盖：{', '.join(path_b_required_sections)}")
+    path_a_rules = prompt_constraints.get("path_a_rules", [])
+    if path_a_rules:
+        lines.append(f"Path A 硬规则：{'; '.join(path_a_rules[:4])}")
+    if sample_asset_path:
+        lines.append(f"样例素材路径：{sample_asset_path}")
 
     return "\n".join(lines)
 
 
-def validate_slides_content(slides: List[Dict]) -> tuple[bool, str]:
+def validate_slides_content(
+    slides: List[Dict],
+    style_config: dict | None = None,
+) -> tuple[bool, str]:
     """
     验证幻灯片内容，包含新字段的验证。
     """
@@ -71,6 +118,12 @@ def validate_slides_content(slides: List[Dict]) -> tuple[bool, str]:
 
     valid_visual_types = {"illustration", "chart", "flow", "quote", "data", "cover"}
     valid_path_hints = {"path_a", "path_b", "auto"}
+    supported_render_paths = effective_render_paths(style_config)
+    forbidden_terms = set(
+        (style_config or {})
+        .get("prompt_constraints", {})
+        .get("path_b_forbidden_terms", [])
+    )
 
     for i, slide in enumerate(slides):
         # 标题必须存在
@@ -91,15 +144,28 @@ def validate_slides_content(slides: List[Dict]) -> tuple[bool, str]:
         path_hint = slide.get("path_hint")
         if path_hint and path_hint not in valid_path_hints:
             return False, f"第 {i+1} 页 path_hint '{path_hint}' 无效"
+        if path_hint in {"path_a", "path_b"} and path_hint not in supported_render_paths:
+            return (
+                False,
+                f"第 {i+1} 页 path_hint '{path_hint}' 与当前风格支持路径 "
+                f"{', '.join(supported_render_paths)} 不一致",
+            )
 
         # illustration/cover/path_b 页面需要 image_prompt
         needs_image_prompt = (
             visual_type in ("illustration", "cover")
             or path_hint == "path_b"
         )
-        if needs_image_prompt and not slide.get("image_prompt"):
-            # Non-fatal: just warn, don't fail validation
-            pass
+        image_prompt = slide.get("image_prompt") or ""
+        if needs_image_prompt and forbidden_terms:
+            matched_terms = [
+                term for term in forbidden_terms if term and term in image_prompt
+            ]
+            if matched_terms:
+                return (
+                    False,
+                    f"第 {i+1} 页 image_prompt 包含风格禁用词: {', '.join(sorted(matched_terms))}",
+                )
 
     return True, "验证通过"
 
@@ -160,3 +226,35 @@ def _generate_default_image_prompt(title: str, visual_type: str) -> Optional[str
     elif visual_type == "illustration":
         return f"一个视觉比喻，帮助理解「{title}」的核心概念，情绪温暖清晰"
     return None
+
+
+def _format_optional_block(title: str, content: str, max_chars: int = 700) -> str:
+    compact = " ".join(str(content).split())
+    if not compact:
+        return ""
+    if len(compact) > max_chars:
+        compact = compact[:max_chars].rstrip() + "..."
+    return f"{title}：{compact}"
+
+
+def _summarize_design_principles(content: str) -> str:
+    compact = " ".join(str(content).split())
+    if not compact:
+        return ""
+
+    highlights = []
+    for phrase in [
+        "Assertion-Evidence Framework",
+        "Information Density",
+        "Title = assertion",
+        "One idea per slide",
+    ]:
+        if phrase in compact:
+            highlights.append(phrase)
+
+    if highlights:
+        return "; ".join(highlights)
+
+    if len(compact) > 240:
+        return compact[:240].rstrip() + "..."
+    return compact

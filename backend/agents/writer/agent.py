@@ -87,7 +87,7 @@ async def run(state: dict) -> dict[str, Any]:
     # 准备提示语
     outline_text = format_outline_for_prompt(outline)
     research_context = format_docs_for_context(source_docs)
-    style_context = build_style_context(style_id, style_config)
+    style_context = build_style_context(style_config)
 
     user_message = WRITER_USER_TEMPLATE.format(
         user_intent=user_intent,
@@ -107,12 +107,13 @@ async def run(state: dict) -> dict[str, Any]:
         llm=llm,
         raw_content=response.content,
         parser=_parse_slides_response,
-        validator=_validate_slide_specs_response,
+        validator=lambda slides: _validate_slide_specs_response(slides, style_config),
         repair_system_prompt=WRITER_REPAIR_SYSTEM_PROMPT,
         repair_user_template=WRITER_REPAIR_USER_TEMPLATE,
         repair_context={
             "user_intent": user_intent,
             "outline_text": outline_text,
+            "style_context": style_context,
         },
     )
 
@@ -175,8 +176,11 @@ def _build_success_message(slides_data: list, repaired: bool) -> str:
     return f"撰稿人{action} {len(slides_data)} 页内容撰写"
 
 
-def _validate_slide_specs_response(slides: list) -> tuple[bool, str]:
-    is_valid, message = validate_slides_content(slides)
+def _validate_slide_specs_response(
+    slides: list,
+    style_config: dict | None = None,
+) -> tuple[bool, str]:
+    is_valid, message = validate_slides_content(slides, style_config)
     if not is_valid:
         return is_valid, message
 
