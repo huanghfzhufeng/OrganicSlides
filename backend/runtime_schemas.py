@@ -115,21 +115,46 @@ class StylePacket(RuntimeBaseModel):
     style: str
     name_zh: str = ""
     name_en: str = ""
+    description: str = ""
     tier: int | str = 1
     colors: ColorPalette = Field(default_factory=ColorPalette)
     typography: TypographyConfig = Field(default_factory=TypographyConfig)
     use_cases: list[str] = Field(default_factory=list)
+    key_principles: list[str] = Field(default_factory=list)
     render_paths: list[RenderPath] = Field(default_factory=lambda: ["path_a"])
     render_path_preference: PathHint = "auto"
     base_style_prompt: str = ""
     sample_image_path: str = ""
+    sample_asset_path: str = ""
+    sample_asset_exists: bool = False
+    reference_sources: list[str] = Field(default_factory=list)
+    reference_summary: str = ""
+    gallery_excerpt: str = ""
+    movement_excerpt: str = ""
+    design_principles_excerpt: str = ""
+    prompt_constraints: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("id", "style_id", "style", "name_zh", "name_en", "base_style_prompt", "sample_image_path", mode="before")
+    @field_validator(
+        "id",
+        "style_id",
+        "style",
+        "name_zh",
+        "name_en",
+        "description",
+        "base_style_prompt",
+        "sample_image_path",
+        "sample_asset_path",
+        "reference_summary",
+        "gallery_excerpt",
+        "movement_excerpt",
+        "design_principles_excerpt",
+        mode="before",
+    )
     @classmethod
     def normalize_scalar_fields(cls, value: Any) -> str:
         return _clean_str(value)
 
-    @field_validator("use_cases", mode="before")
+    @field_validator("use_cases", "key_principles", "reference_sources", mode="before")
     @classmethod
     def normalize_use_cases(cls, value: Any) -> list[str]:
         if not value:
@@ -346,6 +371,9 @@ def build_style_packet(
     source.update(style_config or {})
     if style_id:
         source["style_id"] = style_id
+    from styles.style_packet_assembler import assemble_style_packet_context
+
+    source.update(assemble_style_packet_context(source))
     return StylePacket.model_validate(source)
 
 

@@ -60,6 +60,8 @@ class TestRuntimeSchemas:
         assert packet.render_paths == ["path_a"]
         assert packet.render_path_preference == "auto"
         assert packet.colors.background == "#FDFCF8"
+        assert packet.prompt_constraints["path_a_rules"]
+        assert "Assertion-Evidence Framework" in packet.design_principles_excerpt
 
     def test_create_initial_state_persists_research_and_style_packets(self):
         state = create_initial_state(
@@ -147,3 +149,36 @@ class TestRuntimeSchemas:
         assert plan.render_path == "path_b"
         assert plan.color_system.background == "#FFF8E8"
         assert plan.image_prompt == "Editorial illustration for schema-first architecture"
+
+    def test_build_style_packet_assembles_reference_context_and_sample_asset(self):
+        packet = build_style_packet(
+            style_config={
+                "id": "18-neo-brutalism",
+                "name_zh": "Neo-Brutalism 新粗野主义",
+                "name_en": "Neo-Brutalism",
+                "description": "粗边框+色块+大字，远距离可读。",
+                "tier": 1,
+                "colors": {
+                    "background": "#F5E6D3",
+                    "text": "#1A1A1A",
+                    "accent": "#FF3B4F",
+                },
+                "typography": {},
+                "use_cases": ["education"],
+                "render_paths": ["path_a", "path_b"],
+                "sample_image_path": "/static/styles/samples/style-01-snoopy.png",
+                "base_style_prompt": "Use bold blocks and thick borders.",
+            }
+        )
+
+        assert "Neo-Brutalism" in packet.reference_summary
+        assert "设计运动" in packet.movement_excerpt or "Neo-Brutalism" in packet.movement_excerpt
+        assert packet.prompt_constraints["path_b_required_sections"] == [
+            "visual_reference",
+            "base_style",
+            "design_intent",
+            "text_to_render",
+            "visual_narrative",
+        ]
+        assert packet.sample_asset_exists is True
+        assert packet.sample_asset_path.endswith("backend/static/styles/samples/style-01-snoopy.png")

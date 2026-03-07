@@ -231,6 +231,8 @@ class TestStylesAPI:
         assert self.session_store[session_id]["style_config"]["render_paths"] == ["path_a"]
         assert self.session_store[session_id]["style_packet"]["style_id"] == "01-snoopy"
         assert self.session_store[session_id]["style_packet"]["render_paths"] == ["path_a"]
+        assert self.session_store[session_id]["style_packet"]["reference_sources"]
+        assert self.session_store[session_id]["style_packet"]["prompt_constraints"]["path_a_rules"]
 
     def test_project_create_with_custom_style(self):
         """Test creating project with different styles"""
