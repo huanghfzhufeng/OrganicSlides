@@ -53,6 +53,8 @@ const Skeleton: React.FC<SkeletonProps> = ({
     );
 };
 
+const GENERATION_LINE_WIDTHS = ['72%', '81%', '76%', '88%'] as const;
+
 // 研究进度骨架屏
 export const ResearchSkeleton: React.FC = () => (
     <div className="space-y-4">
@@ -72,27 +74,14 @@ export const ResearchSkeleton: React.FC = () => (
 // 生成结果骨架屏
 export const GenerationSkeleton: React.FC = () => (
     <div className="space-y-4">
-        {[1, 2, 3, 4].map((i) => (
+        {GENERATION_LINE_WIDTHS.map((width, i) => (
             <div key={i} className="flex items-start gap-3">
                 <Skeleton variant="circular" width={24} height={24} />
                 <div className="flex-1">
                     <Skeleton variant="text" width="20%" className="mb-1" />
-                    <Skeleton variant="text" width={`${70 + Math.random() * 20}%`} />
+                    <Skeleton variant="text" width={width} />
                 </div>
             </div>
         ))}
     </div>
 );
-
-// 卡片骨架屏
-export const CardSkeleton: React.FC = () => (
-    <div className="bg-white rounded-[32px] overflow-hidden border border-[#DED8CF] shadow-md">
-        <Skeleton variant="rectangular" height={192} className="rounded-none" />
-        <div className="p-6">
-            <Skeleton variant="text" width="60%" className="mb-2" height={24} />
-            <Skeleton variant="text" lines={2} />
-        </div>
-    </div>
-);
-
-export default Skeleton;
