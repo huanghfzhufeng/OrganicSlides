@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Check, Loader2 } from 'lucide-react';
 import BlobButton from '../components/BlobButton';
 import type { OutlineItem } from '../api/client';
@@ -15,13 +15,12 @@ const createOutlineItem = (): OutlineItem => ({
     type: 'Content',
 });
 
-const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext }) => {
-    const [outline, setOutline] = useState<OutlineItem[]>(() => initialOutline);
-    const [isSubmitting, setIsSubmitting] = useState(false);
+const cloneOutline = (items: OutlineItem[]): OutlineItem[] =>
+    items.map((item) => ({ ...item }));
 
-    useEffect(() => {
-        setOutline(initialOutline);
-    }, [initialOutline]);
+const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext }) => {
+    const [outline, setOutline] = useState<OutlineItem[]>(() => cloneOutline(initialOutline));
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const updateOutlineTitle = (id: string, title: string) => {
         setOutline((currentOutline) =>
@@ -41,7 +40,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext })
 
     const handleNext = async () => {
         setIsSubmitting(true);
-        await onNext(outline);
+        await onNext(cloneOutline(outline));
         setIsSubmitting(false);
     };
 
