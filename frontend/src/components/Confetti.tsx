@@ -26,7 +26,6 @@ const Confetti: React.FC<ConfettiProps> = ({
     pieceCount = 100,
 }) => {
     const [pieces, setPieces] = useState<ConfettiPiece[]>([]);
-    const [isVisible, setIsVisible] = useState(false);
     const animationRef = useRef<number | null>(null);
     const startTimeRef = useRef<number | null>(null);
 
@@ -47,9 +46,6 @@ const Confetti: React.FC<ConfettiProps> = ({
                     rotationSpeed: (Math.random() - 0.5) * 10,
                 });
             }
-            setPieces(newPieces);
-            setIsVisible(true);
-            startTimeRef.current = Date.now();
 
             // 开始动画
             const animate = () => {
@@ -64,10 +60,15 @@ const Confetti: React.FC<ConfettiProps> = ({
                     })));
                     animationRef.current = requestAnimationFrame(animate);
                 } else {
-                    setIsVisible(false);
+                    setPieces([]);
                 }
             };
-            animationRef.current = requestAnimationFrame(animate);
+
+            animationRef.current = requestAnimationFrame(() => {
+                setPieces(newPieces);
+                startTimeRef.current = Date.now();
+                animationRef.current = requestAnimationFrame(animate);
+            });
         }
 
         return () => {
@@ -77,7 +78,7 @@ const Confetti: React.FC<ConfettiProps> = ({
         };
     }, [isActive, duration, pieceCount]);
 
-    if (!isVisible) return null;
+    if (pieces.length === 0) return null;
 
     return (
         <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
