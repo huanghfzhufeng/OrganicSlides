@@ -4,7 +4,7 @@ import { type LucideIcon } from 'lucide-react';
 
 interface BlobButtonProps {
   children: React.ReactNode;
-  variant?: 'primary' | 'secondary' | 'ghost' | 'outline' | 'white';
+  variant?: 'primary' | 'ghost';
   onClick?: () => void;
   className?: string;
   icon?: LucideIcon;
@@ -25,10 +25,7 @@ const BlobButton: React.FC<BlobButtonProps> = ({
 
   const variants = {
     primary: "bg-[#5D7052] text-[#F3F4F1] hover:shadow-[0_6px_24px_-4px_rgba(93,112,82,0.35)]",
-    secondary: "bg-[#C18C5D] text-white hover:shadow-[0_6px_24px_-4px_rgba(193,140,93,0.3)]",
     ghost: "bg-transparent text-[#5D7052] hover:bg-[#5D7052]/10",
-    outline: "border-2 border-[#C18C5D] text-[#C18C5D] bg-transparent hover:bg-[#C18C5D]/5",
-    white: "bg-white/80 text-[#2C2C24] hover:bg-white shadow-sm"
   };
 
   return (
