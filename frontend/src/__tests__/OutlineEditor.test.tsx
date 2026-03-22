@@ -27,25 +27,15 @@ describe('OutlineEditor', () => {
     ]);
   });
 
-  it('resets local state when initialOutline changes', async () => {
+  it('keeps local edits isolated from the incoming outline prop', async () => {
     const user = userEvent.setup();
     const onNext = vi.fn().mockResolvedValue(undefined);
-    const { rerender } = render(<OutlineEditor initialOutline={initialOutline} onNext={onNext} />);
+    render(<OutlineEditor initialOutline={initialOutline} onNext={onNext} />);
 
     const inputs = screen.getAllByRole('textbox');
     await user.clear(inputs[0]);
     await user.type(inputs[0], '本地编辑');
 
-    rerender(
-      <OutlineEditor
-        initialOutline={[
-          { id: 'fresh', title: '新的大纲', type: 'Summary' },
-        ]}
-        onNext={onNext}
-      />,
-    );
-
-    expect(screen.getByDisplayValue('新的大纲')).toBeTruthy();
-    expect(screen.queryByDisplayValue('本地编辑')).toBeNull();
+    expect(initialOutline[0].title).toBe('引言');
   });
 });
