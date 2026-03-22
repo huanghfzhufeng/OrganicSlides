@@ -95,45 +95,6 @@ export interface ProjectPreviewResponse {
     };
 }
 
-export interface ProjectRevision {
-    revision_id: string;
-    project_id?: string | null;
-    session_id: string;
-    revision_number: number;
-    revision_type: string;
-    status: string;
-    theme?: string | null;
-    outline: OutlineItem[];
-    outline_count: number;
-    created_at: string;
-    restored_from_revision_number?: number | null;
-}
-
-export interface ProjectRevisionListResponse {
-    session_id: string;
-    revisions: ProjectRevision[];
-    total: number;
-}
-
-export interface ProjectRevisionRestoreResponse {
-    status: string;
-    session_id: string;
-    restored_revision: ProjectRevision;
-    restoration_revision: {
-        revision_id: string;
-        revision_number: number;
-        revision_type: string;
-    };
-    current_state: {
-        status: string;
-        current_agent: string;
-        outline: OutlineItem[];
-        style_id: string;
-        pptx_path: string;
-        last_restored_revision_number?: number | null;
-    };
-}
-
 export interface ProjectFailure {
     job_id: string;
     session_id: string;
@@ -151,16 +112,16 @@ export interface ProjectFailure {
     failed_at: string | null;
 }
 
-export interface ProjectFailureResponse {
-    session_id: string;
-    failure: ProjectFailure | null;
-}
-
 export interface RetryProjectResponse {
     status: string;
     session_id: string;
     job_id: string;
     trigger: 'start_workflow' | 'resume_workflow' | string;
+}
+
+export interface UpdateOutlineResponse {
+    status: string;
+    outline: OutlineItem[];
 }
 
 // ==================== Token 管理 ====================
@@ -234,14 +195,14 @@ export const api = {
     },
 
     // 项目
-    createProject: async (prompt: string, styleId?: string): Promise<ProjectResponse> => {
+    createProject: async (prompt: string): Promise<ProjectResponse> => {
         const response = await fetch(`${API_BASE_URL}/project/create`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 ...tokenManager.getHeaders()
             },
-            body: JSON.stringify({ prompt, style_id: styleId ?? null, style: 'organic' }),
+            body: JSON.stringify({ prompt, style_id: null, style: 'organic' }),
         });
         if (!response.ok) throw new Error('Failed to create project');
         return response.json();
@@ -263,53 +224,6 @@ export const api = {
             withProjectAccessToken(`${API_BASE_URL}/project/preview/${sessionId}`, sessionAccessToken),
         );
         if (!response.ok) throw new Error('Failed to fetch project preview');
-        return response.json();
-    },
-
-    listProjectRevisions: async (
-        sessionId: string,
-        sessionAccessToken?: string,
-        limit = 20,
-    ): Promise<ProjectRevisionListResponse> => {
-        const response = await fetch(
-            withProjectAccessToken(
-                `${API_BASE_URL}/project/revisions/${sessionId}?limit=${limit}`,
-                sessionAccessToken,
-            ),
-        );
-        if (!response.ok) throw new Error('Failed to fetch project revisions');
-        return response.json();
-    },
-
-    restoreProjectRevision: async (
-        sessionId: string,
-        revisionNumber: number,
-        sessionAccessToken?: string,
-    ): Promise<ProjectRevisionRestoreResponse> => {
-        const response = await fetch(`${API_BASE_URL}/project/revisions/restore`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                ...tokenManager.getHeaders(),
-            },
-            body: JSON.stringify({
-                session_id: sessionId,
-                revision_number: revisionNumber,
-                access_token: sessionAccessToken ?? null,
-            }),
-        });
-        if (!response.ok) throw new Error('Failed to restore project revision');
-        return response.json();
-    },
-
-    getProjectFailure: async (
-        sessionId: string,
-        sessionAccessToken?: string,
-    ): Promise<ProjectFailureResponse> => {
-        const response = await fetch(
-            withProjectAccessToken(`${API_BASE_URL}/project/failure/${sessionId}`, sessionAccessToken),
-        );
-        if (!response.ok) throw new Error('Failed to fetch project failure');
         return response.json();
     },
 
@@ -351,7 +265,11 @@ export const api = {
         return response.json();
     },
 
-    updateOutline: async (sessionId: string, outline: OutlineItem[], sessionAccessToken?: string): Promise<any> => {
+    updateOutline: async (
+        sessionId: string,
+        outline: OutlineItem[],
+        sessionAccessToken?: string,
+    ): Promise<UpdateOutlineResponse> => {
         const response = await fetch(`${API_BASE_URL}/workflow/outline/update`, {
             method: 'POST',
             headers: {
