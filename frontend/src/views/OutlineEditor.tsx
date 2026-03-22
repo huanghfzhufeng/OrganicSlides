@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, Loader2 } from 'lucide-react';
 import BlobButton from '../components/BlobButton';
 import type { OutlineItem } from '../api/client';
@@ -9,9 +9,35 @@ interface OutlineEditorProps {
     onNext: (updatedOutline: OutlineItem[]) => void;
 }
 
+const createOutlineItem = (): OutlineItem => ({
+    id: globalThis.crypto?.randomUUID?.() ?? `outline-${Date.now()}`,
+    title: '新章节',
+    type: 'Content',
+});
+
 const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext }) => {
-    const [outline, setOutline] = useState<OutlineItem[]>(initialOutline);
+    const [outline, setOutline] = useState<OutlineItem[]>(() => initialOutline);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    useEffect(() => {
+        setOutline(initialOutline);
+    }, [initialOutline]);
+
+    const updateOutlineTitle = (id: string, title: string) => {
+        setOutline((currentOutline) =>
+            currentOutline.map((item) =>
+                item.id === id ? { ...item, title } : item,
+            ),
+        );
+    };
+
+    const removeOutlineItem = (id: string) => {
+        setOutline((currentOutline) => currentOutline.filter((item) => item.id !== id));
+    };
+
+    const addOutlineItem = () => {
+        setOutline((currentOutline) => [...currentOutline, createOutlineItem()]);
+    };
 
     const handleNext = async () => {
         setIsSubmitting(true);
@@ -32,16 +58,12 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext })
 
                 <div className="space-y-4 relative z-10">
                     {outline.map((item, idx) => (
-                        <div key={idx} className="group flex items-center gap-4 bg-white/80 p-4 rounded-2xl border border-transparent hover:border-[#5D7052]/30 hover:shadow-md transition-all">
+                        <div key={item.id} className="group flex items-center gap-4 bg-white/80 p-4 rounded-2xl border border-transparent hover:border-[#5D7052]/30 hover:shadow-md transition-all">
                             <div className="text-[#DED8CF] font-fraunces text-xl w-8 text-center">{idx + 1}</div>
                             <div className="flex-1">
                                 <input
                                     value={item.title}
-                                    onChange={(e) => {
-                                        const newOutline = [...outline];
-                                        newOutline[idx].title = e.target.value;
-                                        setOutline(newOutline);
-                                    }}
+                                    onChange={(e) => updateOutlineTitle(item.id, e.target.value)}
                                     className="w-full bg-transparent font-bold text-[#2C2C24] focus:outline-none border-b border-transparent focus:border-[#5D7052]"
                                 />
                                 <div className="flex items-center gap-2 mt-1">
@@ -50,7 +72,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext })
                             </div>
                             <div className="opacity-0 group-hover:opacity-100 flex gap-2">
                                 <button
-                                    onClick={() => setOutline(outline.filter((_, i) => i !== idx))}
+                                    onClick={() => removeOutlineItem(item.id)}
                                     className="p-2 hover:bg-[#A85448]/10 text-[#A85448] rounded-full transition-colors"
                                 >
                                     <span className="text-lg">×</span>
@@ -61,7 +83,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext })
 
                     <button
                         className="w-full py-4 border-2 border-dashed border-[#DED8CF] rounded-2xl text-[#78786C] hover:border-[#5D7052] hover:text-[#5D7052] transition-colors font-bold"
-                        onClick={() => setOutline([...outline, { id: Math.random().toString(), title: "新章节", type: "Content" }])}
+                        onClick={addOutlineItem}
                     >
                         + 添加章节
                     </button>
