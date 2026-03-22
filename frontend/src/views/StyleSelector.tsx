@@ -264,8 +264,10 @@ const StyleSelector: React.FC<StyleSelectorProps> = ({ userIntent, onNext }) => 
                     ?? allStyles[0]?.id
                     ?? '';
                 setSelected(defaultId);
-            } catch (err: any) {
-                if (!cancelled) setError(err.message ?? 'Failed to load styles');
+            } catch (err: unknown) {
+                if (!cancelled) {
+                    setError(err instanceof Error && err.message ? err.message : 'Failed to load styles');
+                }
             } finally {
                 if (!cancelled) setIsLoading(false);
             }
