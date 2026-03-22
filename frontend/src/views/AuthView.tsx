@@ -9,6 +9,9 @@ interface AuthViewProps {
     onAuthSuccess: () => void;
 }
 
+const getErrorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error && error.message ? error.message : fallback;
+
 const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
@@ -29,8 +32,8 @@ const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                 await api.register(email, username, password);
             }
             onAuthSuccess();
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError(getErrorMessage(err, '认证失败'));
         } finally {
             setLoading(false);
         }

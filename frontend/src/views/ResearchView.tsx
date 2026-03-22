@@ -18,6 +18,29 @@ interface ResearchStats {
     sectionsCreated: number;
 }
 
+interface ResearchLogEntry {
+    agent: string;
+    message?: string;
+    status?: string;
+}
+
+interface ResearchEvent {
+    type: 'status' | 'hitl' | 'error' | string;
+    agent?: string;
+    message?: string;
+    status?: string;
+    outline?: OutlineItem[];
+    job_id?: string;
+    retry_trigger?: string;
+    failure_stage?: string;
+    error_type?: string;
+    user_message?: string;
+    recoverable?: boolean;
+    retry_available?: boolean;
+    details?: Record<string, unknown>;
+    failed_at?: string | null;
+}
+
 // Parse real counts from researcher agent message text.
 // Message format: "研究员已完成搜索: 找到 N 条网络资源, M 条文档片段"
 function parseResearcherStats(message: string): Partial<ResearchStats> {
@@ -29,8 +52,11 @@ function parseResearcherStats(message: string): Partial<ResearchStats> {
     return result;
 }
 
+const getErrorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error && error.message ? error.message : fallback;
+
 const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, sessionAccessToken, onComplete }) => {
-    const [logs, setLogs] = useState<any[]>([]);
+    const [logs, setLogs] = useState<ResearchLogEntry[]>([]);
     const [currentStatus, setCurrentStatus] = useState("正在初始化研究...");
     const [stats, setStats] = useState<ResearchStats>({
         sourcesFound: 0,
@@ -48,11 +74,16 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, sessionAccessTok
         const eventSource = new EventSource(api.getStartWorkflowUrl(sessionId, sessionAccessToken));
 
         eventSource.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+            const data: ResearchEvent = JSON.parse(event.data);
 
             if (data.type === 'status') {
-                setLogs(prev => [...prev, data]);
-                setCurrentStatus(data.message || `正在由 ${data.agent} 处理...`);
+                const logEntry: ResearchLogEntry = {
+                    agent: data.agent ?? 'workflow',
+                    message: data.message,
+                    status: data.status,
+                };
+                setLogs(prev => [...prev, logEntry]);
+                setCurrentStatus(data.message || `正在由 ${data.agent ?? 'workflow'} 处理...`);
                 setProgress(prev => Math.min(prev + 15, 90));
 
                 if (data.agent === 'researcher' && data.message) {
@@ -71,7 +102,7 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, sessionAccessTok
             } else if (data.type === 'hitl') {
                 setProgress(100);
                 eventSource.close();
-                setTimeout(() => onComplete(data.outline), 500);
+                setTimeout(() => onComplete(data.outline ?? []), 500);
             } else if (data.type === 'error') {
                 const nextFailure: ProjectFailure = {
                     job_id: data.job_id ?? '',
@@ -123,8 +154,8 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, sessionAccessTok
             );
             setFailure(null);
             setAttemptKey((value) => value + 1);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError(getErrorMessage(err, '重新发起研究失败'));
         } finally {
             setIsRetrying(false);
         }
