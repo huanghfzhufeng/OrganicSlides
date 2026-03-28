@@ -351,7 +351,11 @@ export const api = {
         return response.json();
     },
 
-    updateOutline: async (sessionId: string, outline: OutlineItem[], sessionAccessToken?: string): Promise<any> => {
+    updateOutline: async (
+        sessionId: string,
+        outline: OutlineItem[],
+        sessionAccessToken?: string,
+    ): Promise<Record<string, unknown>> => {
         const response = await fetch(`${API_BASE_URL}/workflow/outline/update`, {
             method: 'POST',
             headers: {

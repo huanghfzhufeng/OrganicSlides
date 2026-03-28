@@ -29,6 +29,42 @@ interface SlideProgress {
     error?: string;
 }
 
+interface GenerationLogEntry {
+    agent: string;
+    message?: string;
+}
+
+interface GenerationSeedSlide {
+    index?: number;
+    slide_index?: number;
+    slide_number?: number;
+    title?: string;
+    render_path?: string;
+}
+
+interface GenerationEvent {
+    type: 'status' | 'render_progress' | 'slides_initialized' | 'complete' | 'error' | string;
+    agent?: string;
+    message?: string;
+    job_id?: string;
+    retry_trigger?: string;
+    status?: string;
+    failure_stage?: string;
+    error_type?: string;
+    user_message?: string;
+    recoverable?: boolean;
+    retry_available?: boolean;
+    details?: Record<string, unknown>;
+    failed_at?: string | null;
+    slides?: GenerationSeedSlide[];
+    slide_index?: number;
+    slide_number?: number;
+    slide_title?: string;
+    render_path?: string;
+    thumbnail_url?: string;
+    error?: string;
+}
+
 // ==================== SlideCard ====================
 
 const RENDER_PATH_LABEL: Record<string, string> = {
@@ -40,6 +76,9 @@ const RENDER_PATH_COLOR: Record<string, string> = {
     path_a: '#5D7052',
     path_b: '#C18C5D',
 };
+
+const getErrorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error && error.message ? error.message : fallback;
 
 interface SlideCardProps {
     slide: SlideProgress;
@@ -118,7 +157,7 @@ const SlideCard: React.FC<SlideCardProps> = ({ slide }) => {
 
 const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, sessionAccessToken }) => {
     const [isDone, setIsDone] = useState(false);
-    const [logs, setLogs] = useState<any[]>([]);
+    const [logs, setLogs] = useState<GenerationLogEntry[]>([]);
     const [slides, setSlides] = useState<SlideProgress[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [showConfetti, setShowConfetti] = useState(false);
@@ -169,10 +208,13 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
         const eventSource = new EventSource(api.getResumeWorkflowUrl(sessionId, sessionAccessToken));
 
         eventSource.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+            const data: GenerationEvent = JSON.parse(event.data);
 
             if (data.type === 'status') {
-                setLogs(prev => [...prev, data]);
+                setLogs(prev => [...prev, {
+                    agent: data.agent ?? 'workflow',
+                    message: data.message,
+                }]);
                 setProgress(prev => Math.min(prev + 15, 90));
             } else if (data.type === 'render_progress') {
                 // Per-slide rendering progress event from Task #8 backend
@@ -204,10 +246,10 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                 // Backend sends initial slide list so we can show pending cards immediately
                 // Expected: { type, slides: [{ index|slide_index|slide_number, title, render_path }] }
                 if (Array.isArray(data.slides)) {
-                    setSlides(data.slides.map((s: any) => ({
-                        slideIndex: s.index ?? s.slide_index ?? ((s.slide_number ?? 1) - 1),
-                        title: s.title ?? '',
-                        renderPath: s.render_path ?? 'path_a',
+                    setSlides(data.slides.map((slide) => ({
+                        slideIndex: slide.index ?? slide.slide_index ?? ((slide.slide_number ?? 1) - 1),
+                        title: slide.title ?? '',
+                        renderPath: slide.render_path ?? 'path_a',
                         status: 'pending' as SlideStatus,
                     })));
                 }
@@ -268,8 +310,8 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
             );
             setFailure(null);
             setAttemptKey((value) => value + 1);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError(getErrorMessage(err, '重新排队失败'));
         } finally {
             setIsRetrying(false);
         }
