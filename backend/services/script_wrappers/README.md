@@ -31,7 +31,7 @@ def generate_image(
     api_key: Optional[str] = None,
 ) -> Optional[str]:
     """
-    Generate an image using Google Gemini 3 Pro Image API.
+    Generate an image using the `gemini-3.1-flash-image-preview` API.
 
     Returns:
         Absolute path to generated image on success, None on failure
