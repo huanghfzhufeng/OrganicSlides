@@ -9,38 +9,13 @@ interface OutlineEditorProps {
     onNext: (updatedOutline: OutlineItem[]) => void;
 }
 
-const createOutlineItem = (): OutlineItem => ({
-    id: globalThis.crypto?.randomUUID?.() ?? `outline-${Date.now()}`,
-    title: '新章节',
-    type: 'Content',
-});
-
-const cloneOutline = (items: OutlineItem[]): OutlineItem[] =>
-    items.map((item) => ({ ...item }));
-
 const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext }) => {
-    const [outline, setOutline] = useState<OutlineItem[]>(() => cloneOutline(initialOutline));
+    const [outline, setOutline] = useState<OutlineItem[]>(initialOutline);
     const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const updateOutlineTitle = (id: string, title: string) => {
-        setOutline((currentOutline) =>
-            currentOutline.map((item) =>
-                item.id === id ? { ...item, title } : item,
-            ),
-        );
-    };
-
-    const removeOutlineItem = (id: string) => {
-        setOutline((currentOutline) => currentOutline.filter((item) => item.id !== id));
-    };
-
-    const addOutlineItem = () => {
-        setOutline((currentOutline) => [...currentOutline, createOutlineItem()]);
-    };
 
     const handleNext = async () => {
         setIsSubmitting(true);
-        await onNext(cloneOutline(outline));
+        await onNext(outline);
         setIsSubmitting(false);
     };
 
@@ -48,7 +23,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext })
         <div className="max-w-4xl mx-auto">
             <div className="text-center mb-8">
                 <h2 className="font-fraunces text-3xl text-[#2C2C24]">策划师建议的大纲</h2>
-                <p className="text-[#78786C]">请审阅并调整演示文稿的结构，确认无误后我们将开始生成。</p>
+                <p className="text-[#78786C]">请先确认章节结构。下一步系统会把它继续展开成逐页蓝图，再进入风格选择。</p>
             </div>
 
             <div className="bg-[#FEFEFA] border border-[#DED8CF] rounded-[32px] p-8 shadow-sm mb-8 relative overflow-hidden">
@@ -57,12 +32,16 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext })
 
                 <div className="space-y-4 relative z-10">
                     {outline.map((item, idx) => (
-                        <div key={item.id} className="group flex items-center gap-4 bg-white/80 p-4 rounded-2xl border border-transparent hover:border-[#5D7052]/30 hover:shadow-md transition-all">
+                        <div key={idx} className="group flex items-center gap-4 bg-white/80 p-4 rounded-2xl border border-transparent hover:border-[#5D7052]/30 hover:shadow-md transition-all">
                             <div className="text-[#DED8CF] font-fraunces text-xl w-8 text-center">{idx + 1}</div>
                             <div className="flex-1">
                                 <input
                                     value={item.title}
-                                    onChange={(e) => updateOutlineTitle(item.id, e.target.value)}
+                                    onChange={(e) => {
+                                        setOutline(outline.map((item, i) =>
+                                            i === idx ? { ...item, title: e.target.value } : item
+                                        ));
+                                    }}
                                     className="w-full bg-transparent font-bold text-[#2C2C24] focus:outline-none border-b border-transparent focus:border-[#5D7052]"
                                 />
                                 <div className="flex items-center gap-2 mt-1">
@@ -71,7 +50,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext })
                             </div>
                             <div className="opacity-0 group-hover:opacity-100 flex gap-2">
                                 <button
-                                    onClick={() => removeOutlineItem(item.id)}
+                                    onClick={() => setOutline(outline.filter((_, i) => i !== idx))}
                                     className="p-2 hover:bg-[#A85448]/10 text-[#A85448] rounded-full transition-colors"
                                 >
                                     <span className="text-lg">×</span>
@@ -82,7 +61,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext })
 
                     <button
                         className="w-full py-4 border-2 border-dashed border-[#DED8CF] rounded-2xl text-[#78786C] hover:border-[#5D7052] hover:text-[#5D7052] transition-colors font-bold"
-                        onClick={addOutlineItem}
+                        onClick={() => setOutline([...outline, { id: crypto.randomUUID(), title: "新章节", type: "Content" }])}
                     >
                         + 添加章节
                     </button>
@@ -91,7 +70,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ initialOutline, onNext })
 
             <div className="flex justify-center gap-4">
                 <BlobButton onClick={handleNext} icon={isSubmitting ? Loader2 : Check} disabled={isSubmitting}>
-                    {isSubmitting ? "正在确认..." : "确认大纲并继续"}
+                    {isSubmitting ? "正在确认..." : "确认大纲并生成页级蓝图"}
                 </BlobButton>
             </div>
         </div>

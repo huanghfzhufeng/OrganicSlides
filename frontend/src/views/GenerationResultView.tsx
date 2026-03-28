@@ -1,19 +1,22 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     Loader2, Download, Layout, Palette, Feather, Sparkles, PartyPopper,
-    CheckCircle2, XCircle, Clock, FileImage
+    CheckCircle2, XCircle, Clock, FileImage, Eye
 } from 'lucide-react';
 import BlobButton from '../components/BlobButton';
-import { api, type ProjectFailure } from '../api/client';
+import SlidePreviewModal from './SlidePreviewModal';
+import CollaborativeReviewPanel from '../components/CollaborativeReviewPanel';
+import { api, type CollaborationMode, type SlideReviewResponse } from '../api/client';
 import { dandelionIcon } from '../assets/icons';
 import Confetti from '../components/Confetti';
 import { GenerationSkeleton } from '../components/Skeleton';
 import ErrorMessage from '../components/ErrorMessage';
+import { useSSE } from '../hooks/useSSE';
 
 interface GenerationResultViewProps {
     sessionId: string;
-    sessionAccessToken: string;
+    collaborationMode?: CollaborationMode;
 }
 
 // ==================== Types ====================
@@ -29,42 +32,6 @@ interface SlideProgress {
     error?: string;
 }
 
-interface GenerationLogEntry {
-    agent: string;
-    message?: string;
-}
-
-interface GenerationSeedSlide {
-    index?: number;
-    slide_index?: number;
-    slide_number?: number;
-    title?: string;
-    render_path?: string;
-}
-
-interface GenerationEvent {
-    type: 'status' | 'render_progress' | 'slides_initialized' | 'complete' | 'error' | string;
-    agent?: string;
-    message?: string;
-    job_id?: string;
-    retry_trigger?: string;
-    status?: string;
-    failure_stage?: string;
-    error_type?: string;
-    user_message?: string;
-    recoverable?: boolean;
-    retry_available?: boolean;
-    details?: Record<string, unknown>;
-    failed_at?: string | null;
-    slides?: GenerationSeedSlide[];
-    slide_index?: number;
-    slide_number?: number;
-    slide_title?: string;
-    render_path?: string;
-    thumbnail_url?: string;
-    error?: string;
-}
-
 // ==================== SlideCard ====================
 
 const RENDER_PATH_LABEL: Record<string, string> = {
@@ -76,9 +43,6 @@ const RENDER_PATH_COLOR: Record<string, string> = {
     path_a: '#5D7052',
     path_b: '#C18C5D',
 };
-
-const getErrorMessage = (error: unknown, fallback: string) =>
-    error instanceof Error && error.message ? error.message : fallback;
 
 interface SlideCardProps {
     slide: SlideProgress;
@@ -155,167 +119,128 @@ const SlideCard: React.FC<SlideCardProps> = ({ slide }) => {
 
 // ==================== GenerationResultView ====================
 
-const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, sessionAccessToken }) => {
+const GenerationResultView: React.FC<GenerationResultViewProps> = ({
+    sessionId,
+    collaborationMode = 'guided',
+}) => {
     const [isDone, setIsDone] = useState(false);
-    const [logs, setLogs] = useState<GenerationLogEntry[]>([]);
+    const [logs, setLogs] = useState<any[]>([]);
     const [slides, setSlides] = useState<SlideProgress[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [showConfetti, setShowConfetti] = useState(false);
     const [progress, setProgress] = useState(0);
-    const [failure, setFailure] = useState<ProjectFailure | null>(null);
-    const [attemptKey, setAttemptKey] = useState(0);
-    const [isRetrying, setIsRetrying] = useState(false);
+    const [showPreview, setShowPreview] = useState(false);
+    const [retryKey, setRetryKey] = useState(0);
+    const [reviewState, setReviewState] = useState<SlideReviewResponse | null>(null);
+    const [reviewApproved, setReviewApproved] = useState(false);
+    const [workflowPhase, setWorkflowPhase] = useState<'drafting' | 'review' | 'rendering'>(
+        collaborationMode === 'collaborative' ? 'drafting' : 'rendering',
+    );
 
-    useEffect(() => {
-        let cancelled = false;
-
-        const hydratePreview = async () => {
-            try {
-                const payload = await api.getProjectPreview(sessionId, sessionAccessToken);
-                if (cancelled) return;
-
-                const hydratedSlides: SlideProgress[] = payload.preview.slides.map((slide) => ({
-                    slideIndex: Math.max(slide.page_number - 1, 0),
-                    title: slide.title,
-                    renderPath: slide.render_path,
-                    status: (slide.status as SlideStatus) ?? 'pending',
-                    thumbnailUrl: slide.preview_url || slide.thumbnail_url || undefined,
-                }));
-
-                setSlides((current) => (current.length > 0 ? current : hydratedSlides));
-                if (payload.status === 'render_complete') {
-                    setIsDone(true);
-                    setProgress(100);
-                } else if (hydratedSlides.length > 0) {
-                    const completed = hydratedSlides.filter(
-                        (slide) => slide.status === 'complete' || slide.status === 'failed',
-                    ).length;
-                    setProgress(Math.min(10 + Math.round((completed / hydratedSlides.length) * 85), 95));
-                }
-            } catch {
-                // Ignore preview hydration failures and let the live SSE stream drive the UI.
-            }
-        };
-
-        hydratePreview();
-        return () => {
-            cancelled = true;
-        };
-    }, [sessionId, sessionAccessToken, attemptKey]);
-
-    useEffect(() => {
+    const handleRetry = () => {
         setError(null);
-        const eventSource = new EventSource(api.getResumeWorkflowUrl(sessionId, sessionAccessToken));
-
-        eventSource.onmessage = (event) => {
-            const data: GenerationEvent = JSON.parse(event.data);
-
-            if (data.type === 'status') {
-                setLogs(prev => [...prev, {
-                    agent: data.agent ?? 'workflow',
-                    message: data.message,
-                }]);
-                setProgress(prev => Math.min(prev + 15, 90));
-            } else if (data.type === 'render_progress') {
-                // Per-slide rendering progress event from Task #8 backend
-                // Expected shape: { type, slide_number, slide_index?, slide_title, render_path, status, thumbnail_url?, error? }
-                const slideIndex = data.slide_index ?? ((data.slide_number ?? 1) - 1);
-                const { slide_title, render_path, status, thumbnail_url, error: slideError } = data;
-                setSlides(prev => {
-                    const existing = prev.find(s => s.slideIndex === slideIndex);
-                    const updated: SlideProgress = {
-                        slideIndex,
-                        title: slide_title ?? existing?.title ?? '',
-                        renderPath: render_path ?? existing?.renderPath ?? 'path_a',
-                        status: (status as SlideStatus) ?? 'pending',
-                        thumbnailUrl: thumbnail_url ?? existing?.thumbnailUrl,
-                        error: slideError ?? existing?.error,
-                    };
-                    const next = existing
-                        ? prev.map(s => s.slideIndex === slideIndex ? updated : s)
-                        : [...prev, updated].sort((a, b) => a.slideIndex - b.slideIndex);
-
-                    // Derive progress from next state (no nested setState)
-                    const completed = next.filter(s => s.status === 'complete' || s.status === 'failed').length;
-                    if (next.length > 0) {
-                        setProgress(Math.min(10 + Math.round((completed / next.length) * 85), 95));
-                    }
-                    return next;
-                });
-            } else if (data.type === 'slides_initialized') {
-                // Backend sends initial slide list so we can show pending cards immediately
-                // Expected: { type, slides: [{ index|slide_index|slide_number, title, render_path }] }
-                if (Array.isArray(data.slides)) {
-                    setSlides(data.slides.map((slide) => ({
-                        slideIndex: slide.index ?? slide.slide_index ?? ((slide.slide_number ?? 1) - 1),
-                        title: slide.title ?? '',
-                        renderPath: slide.render_path ?? 'path_a',
-                        status: 'pending' as SlideStatus,
-                    })));
-                }
-            } else if (data.type === 'complete') {
-                setProgress(100);
-                setSlides(prev => prev.map(s =>
-                    s.status !== 'failed' ? { ...s, status: 'complete' } : s
-                ));
-                setIsDone(true);
-                setShowConfetti(true);
-                setFailure(null);
-                eventSource.close();
-            } else if (data.type === 'error') {
-                const nextFailure: ProjectFailure = {
-                    job_id: data.job_id ?? '',
-                    session_id: sessionId,
-                    trigger: data.retry_trigger ?? 'resume_workflow',
-                    status: data.status ?? 'error',
-                    current_agent: data.failure_stage ?? data.agent ?? 'workflow',
-                    error_type: data.error_type ?? 'generation_failed',
-                    failure_stage: data.failure_stage ?? data.agent ?? 'workflow',
-                    message: data.user_message ?? data.message ?? '生成过程出错，请重试',
-                    technical_message: data.message ?? '生成过程出错，请重试',
-                    recoverable: data.recoverable ?? true,
-                    retry_available: data.retry_available ?? true,
-                    retry_trigger: data.retry_trigger ?? 'resume_workflow',
-                    details: data.details ?? {},
-                    failed_at: data.failed_at ?? null,
-                };
-                setFailure(nextFailure);
-                setError(nextFailure.message);
-                eventSource.close();
-            }
-        };
-
-        eventSource.onerror = () => {
-            setFailure(null);
-            setError("连接中断，请检查网络后重试");
-            eventSource.close();
-        };
-
-        return () => eventSource.close();
-    }, [sessionId, sessionAccessToken, attemptKey]);
-
-    const handleRetry = async () => {
-        try {
-            setIsRetrying(true);
-            setIsDone(false);
-            setShowConfetti(false);
-            setLogs([]);
-            setSlides([]);
-            setProgress(0);
-            setError(null);
-            await api.retryProjectGeneration(
-                sessionId,
-                failure?.retry_trigger ?? 'resume_workflow',
-                sessionAccessToken,
-            );
-            setFailure(null);
-            setAttemptKey((value) => value + 1);
-        } catch (err: unknown) {
-            setError(getErrorMessage(err, '重新排队失败'));
-        } finally {
-            setIsRetrying(false);
+        setRetryKey(prev => prev + 1);
+        if (collaborationMode === 'collaborative' && reviewApproved) {
+            setWorkflowPhase('rendering');
+            return;
         }
+        setReviewState(null);
+        setReviewApproved(false);
+        setWorkflowPhase(collaborationMode === 'collaborative' ? 'drafting' : 'rendering');
     };
+
+    const handleMessage = useCallback((data: any) => {
+        if (data.type === 'status') {
+            setLogs(prev => [...prev, data]);
+            setProgress(prev => Math.min(prev + 15, 90));
+        } else if (data.type === 'hitl' && data.status === 'waiting_for_slide_review') {
+            setLogs(prev => [...prev, {
+                type: 'status',
+                agent: 'collaborative_reviewer',
+                status: 'waiting_for_slide_review',
+                message: '逐页草稿已经准备好，请先逐页确认内容，再进入最终渲染。',
+            }]);
+            setReviewState(data.review ?? null);
+            setReviewApproved(false);
+            setWorkflowPhase('review');
+            setProgress(prev => Math.max(prev, 72));
+        } else if (data.type === 'render_progress') {
+            // Per-slide rendering progress event from Task #8 backend
+            // Expected shape: { type, slide_index, slide_title, render_path, status, thumbnail_url?, error? }
+            const { slide_index, slide_title, render_path, status, thumbnail_url, error: slideError } = data;
+            setSlides(prev => {
+                const existing = prev.find(s => s.slideIndex === slide_index);
+                const updated: SlideProgress = {
+                    slideIndex: slide_index,
+                    title: slide_title ?? existing?.title ?? '',
+                    renderPath: render_path ?? existing?.renderPath ?? 'path_a',
+                    status: (status as SlideStatus) ?? 'pending',
+                    thumbnailUrl: thumbnail_url ?? existing?.thumbnailUrl,
+                    error: slideError ?? existing?.error,
+                };
+                const next = existing
+                    ? prev.map(s => s.slideIndex === slide_index ? updated : s)
+                    : [...prev, updated].sort((a, b) => a.slideIndex - b.slideIndex);
+
+                // Derive progress from next state (no nested setState)
+                const completed = next.filter(s => s.status === 'complete' || s.status === 'failed').length;
+                if (next.length > 0) {
+                    setProgress(Math.min(10 + Math.round((completed / next.length) * 85), 95));
+                }
+                return next;
+            });
+        } else if (data.type === 'slides_initialized') {
+            setWorkflowPhase('rendering');
+            // Backend sends initial slide list so we can show pending cards immediately
+            // Expected: { type, slides: [{ index, title, render_path }] }
+            if (Array.isArray(data.slides)) {
+                setSlides(data.slides.map((s: any) => ({
+                    slideIndex: s.index ?? s.slide_index ?? 0,
+                    title: s.title ?? '',
+                    renderPath: s.render_path ?? 'path_a',
+                    status: 'pending' as SlideStatus,
+                })));
+            }
+        } else if (data.type === 'complete') {
+            setWorkflowPhase('rendering');
+            setProgress(100);
+            setSlides(prev => prev.map(s =>
+                s.status !== 'failed' ? { ...s, status: 'complete' } : s
+            ));
+            setIsDone(true);
+            setShowConfetti(true);
+        } else if (data.type === 'error') {
+            setError(data.message);
+        }
+    }, []);
+
+    const handleError = useCallback((errMsg: string) => {
+        if (workflowPhase === 'review') {
+            return;
+        }
+        setError(errMsg);
+    }, [workflowPhase]);
+
+    const handleReviewApproved = useCallback(() => {
+        setError(null);
+        setReviewState(null);
+        setReviewApproved(true);
+        setWorkflowPhase('rendering');
+        setSlides([]);
+        setProgress(prev => Math.max(prev, 78));
+        setRetryKey(prev => prev + 1);
+    }, []);
+
+    const sseUrl = workflowPhase === 'rendering' && collaborationMode === 'collaborative'
+        ? `${api.getRenderWorkflowUrl(sessionId)}&retry=${retryKey}`
+        : `${api.getResumeWorkflowUrl(sessionId)}&retry=${retryKey}`;
+
+    useSSE({
+        url: sseUrl,
+        onMessage: handleMessage,
+        onError: handleError,
+        enabled: !isDone && workflowPhase !== 'review',
+    });
 
     const completedCount = slides.filter(s => s.status === 'complete').length;
     const failedCount = slides.filter(s => s.status === 'failed').length;
@@ -323,6 +248,9 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full min-h-[500px] page-enter">
             <Confetti isActive={showConfetti} />
+            {showPreview && (
+                <SlidePreviewModal sessionId={sessionId} onClose={() => setShowPreview(false)} />
+            )}
 
             {/* Left: Agent logs + progress */}
             <div className="lg:col-span-4 flex flex-col gap-6">
@@ -335,7 +263,15 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                         ) : (
                             <PartyPopper className="text-[#C18C5D]" />
                         )}
-                        {error ? "生成出错" : isDone ? "生成完毕" : "正在进行最终创作..."}
+                        {error
+                            ? "生成出错"
+                            : isDone
+                                ? "生成完毕"
+                                : workflowPhase === 'review'
+                                    ? "等待逐页审阅..."
+                                    : workflowPhase === 'drafting'
+                                        ? "正在准备逐页草稿..."
+                                        : "正在进行最终创作..."}
                     </h3>
 
                     {/* Overall progress bar */}
@@ -363,19 +299,8 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                         {error && (
                             <ErrorMessage
                                 message={error}
-                                title={failure ? "生成任务失败" : "连接异常"}
-                                details={failure ? [
-                                    `失败阶段：${failure.failure_stage}`,
-                                    `错误类型：${failure.error_type}`,
-                                    `技术信息：${failure.technical_message}`,
-                                ] : []}
-                                type={failure ? "error" : "network"}
-                                retryLabel={isRetrying ? '重新排队中...' : failure ? '重新排队' : '重新连接'}
-                                onRetry={
-                                    failure
-                                        ? (failure.retry_available ? handleRetry : undefined)
-                                        : () => setAttemptKey((value) => value + 1)
-                                }
+                                type="error"
+                                onRetry={handleRetry}
                             />
                         )}
                         {logs.length === 0 && !error ? (
@@ -398,23 +323,34 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                 </div>
 
                 {isDone && (
-                    <a href={api.getDownloadUrl(sessionId, sessionAccessToken)} download>
-                        <BlobButton variant="primary" icon={Download} className="w-full ripple-btn">
-                            下载完整 .pptx
+                    <div className="flex flex-col gap-2">
+                        <BlobButton variant="ghost" icon={Eye} className="w-full" onClick={() => setShowPreview(true)}>
+                            预览
                         </BlobButton>
-                    </a>
+                        <a href={api.getDownloadUrl(sessionId)} download>
+                            <BlobButton variant="primary" icon={Download} className="w-full ripple-btn">
+                                下载 .pptx
+                            </BlobButton>
+                        </a>
+                    </div>
                 )}
             </div>
 
             {/* Right: Per-slide progress OR completion view */}
             <div className="lg:col-span-8 flex flex-col gap-4">
-                {slides.length > 0 ? (
+                {workflowPhase === 'review' && reviewState ? (
+                    <CollaborativeReviewPanel
+                        sessionId={sessionId}
+                        initialReview={reviewState}
+                        onApproved={handleReviewApproved}
+                    />
+                ) : slides.length > 0 ? (
                     <>
                         {/* Per-slide grid */}
                         <div className="flex-1 bg-[#FEFEFA] border border-[#DED8CF] rounded-[24px] p-6 overflow-y-auto">
                             <h4 className="font-fraunces text-base text-[#2C2C24] mb-4 flex items-center gap-2">
                                 <span className="w-1.5 h-4 rounded-full bg-[#5D7052] inline-block" />
-                                逐页渲染进度
+                                {workflowPhase === 'drafting' ? '逐页草稿生成进度' : '逐页渲染进度'}
                             </h4>
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                                 {slides.map((slide) => (
@@ -445,8 +381,14 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                             ) : (
                                 <>
                                     <span className="text-xs font-bold tracking-widest text-[#5D7052] uppercase mb-4 block">RENDER ENGINE</span>
-                                    <h2 className="font-fraunces text-4xl text-[#2C2C24]">您的演示文稿即将就绪</h2>
-                                    <p className="mt-4 text-[#78786C] max-w-sm mx-auto">正在将 AI 生成的内容与视觉方案合成为标准的 Microsoft PowerPoint 格式</p>
+                                    <h2 className="font-fraunces text-4xl text-[#2C2C24]">
+                                        {workflowPhase === 'drafting' ? '系统正在拆解逐页草稿' : '您的演示文稿即将就绪'}
+                                    </h2>
+                                    <p className="mt-4 text-[#78786C] max-w-sm mx-auto">
+                                        {workflowPhase === 'drafting'
+                                            ? '我们先把章节展开成逐页内容草稿，方便你在 Collaborative 模式下逐页确认。'
+                                            : '正在将 AI 生成的内容与视觉方案合成为标准的 Microsoft PowerPoint 格式'}
+                                    </p>
                                 </>
                             )}
                         </div>
@@ -460,7 +402,11 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                         {!isDone && !error && (
                             <div className="absolute inset-0 bg-white/50 backdrop-blur-sm flex flex-col items-center justify-center z-20">
                                 <Loader2 className="animate-spin text-[#5D7052] mb-4" size={48} />
-                                <span className="bg-white px-4 py-2 rounded-full shadow-sm text-sm text-[#78786C]">渲染引擎正在生成原生 PPT 对象...</span>
+                                <span className="bg-white px-4 py-2 rounded-full shadow-sm text-sm text-[#78786C]">
+                                    {workflowPhase === 'drafting'
+                                        ? '正在写逐页草稿并准备审阅工作台...'
+                                        : '渲染引擎正在生成原生 PPT 对象...'}
+                                </span>
                             </div>
                         )}
                     </div>
@@ -469,7 +415,11 @@ const GenerationResultView: React.FC<GenerationResultViewProps> = ({ sessionId, 
                 {/* Info footer */}
                 <div className="bg-white/40 p-4 rounded-xl text-xs text-[#78786C] flex items-center justify-center gap-2">
                     <Sparkles size={14} className="text-[#C18C5D]" />
-                    {isDone ? "恭喜！您可以直接在 PowerPoint 中打开并进行二次修改。" : "提示：生成完毕后，您可以直接下载并在 PowerPoint 中进行二次修改。"}
+                    {isDone
+                        ? "恭喜！您可以直接在 PowerPoint 中打开并进行二次修改。"
+                        : workflowPhase === 'review'
+                            ? "当前是 Collaborative 逐页审阅阶段。只有所有页面都接受后，系统才会继续进入最终渲染。"
+                            : "提示：生成完毕后，您可以直接下载并在 PowerPoint 中进行二次修改。"}
                 </div>
             </div>
         </div>

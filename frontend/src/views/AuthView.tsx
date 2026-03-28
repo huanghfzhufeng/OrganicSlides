@@ -9,9 +9,6 @@ interface AuthViewProps {
     onAuthSuccess: () => void;
 }
 
-const getErrorMessage = (error: unknown, fallback: string) =>
-    error instanceof Error && error.message ? error.message : fallback;
-
 const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
@@ -32,8 +29,14 @@ const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                 await api.register(email, username, password);
             }
             onAuthSuccess();
-        } catch (err: unknown) {
-            setError(getErrorMessage(err, '认证失败'));
+        } catch (err: any) {
+            if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+                setError('请求超时，请检查后端服务是否正常运行');
+            } else if (err.message === 'Failed to fetch') {
+                setError('无法连接到服务器，请检查后端服务是否已启动');
+            } else {
+                setError(err.message);
+            }
         } finally {
             setLoading(false);
         }

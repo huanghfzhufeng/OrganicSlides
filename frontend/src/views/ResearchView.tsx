@@ -1,14 +1,14 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Globe, FileText, Loader2, Search, BookOpen, Database, CheckCircle2 } from 'lucide-react';
-import { api, type OutlineItem, type ProjectFailure } from '../api/client';
+import { api, type OutlineItem } from '../api/client';
 import { flowingLeavesIcon } from '../assets/icons';
 import { ResearchSkeleton } from '../components/Skeleton';
 import ErrorMessage from '../components/ErrorMessage';
+import { useSSE } from '../hooks/useSSE';
 
 interface ResearchViewProps {
     sessionId: string;
-    sessionAccessToken: string;
     onComplete: (outline: OutlineItem[]) => void;
 }
 
@@ -16,29 +16,6 @@ interface ResearchStats {
     sourcesFound: number;
     dataProcessed: number;
     sectionsCreated: number;
-}
-
-interface ResearchLogEntry {
-    agent: string;
-    message?: string;
-    status?: string;
-}
-
-interface ResearchEvent {
-    type: 'status' | 'hitl' | 'error' | string;
-    agent?: string;
-    message?: string;
-    status?: string;
-    outline?: OutlineItem[];
-    job_id?: string;
-    retry_trigger?: string;
-    failure_stage?: string;
-    error_type?: string;
-    user_message?: string;
-    recoverable?: boolean;
-    retry_available?: boolean;
-    details?: Record<string, unknown>;
-    failed_at?: string | null;
 }
 
 // Parse real counts from researcher agent message text.
@@ -52,11 +29,8 @@ function parseResearcherStats(message: string): Partial<ResearchStats> {
     return result;
 }
 
-const getErrorMessage = (error: unknown, fallback: string) =>
-    error instanceof Error && error.message ? error.message : fallback;
-
-const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, sessionAccessToken, onComplete }) => {
-    const [logs, setLogs] = useState<ResearchLogEntry[]>([]);
+const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, onComplete }) => {
+    const [logs, setLogs] = useState<any[]>([]);
     const [currentStatus, setCurrentStatus] = useState("正在初始化研究...");
     const [stats, setStats] = useState<ResearchStats>({
         sourcesFound: 0,
@@ -65,123 +39,51 @@ const ResearchView: React.FC<ResearchViewProps> = ({ sessionId, sessionAccessTok
     });
     const [progress, setProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
-    const [failure, setFailure] = useState<ProjectFailure | null>(null);
-    const [attemptKey, setAttemptKey] = useState(0);
-    const [isRetrying, setIsRetrying] = useState(false);
 
-    useEffect(() => {
-        setError(null);
-        const eventSource = new EventSource(api.getStartWorkflowUrl(sessionId, sessionAccessToken));
+    const handleMessage = useCallback((data: any) => {
+        if (data.type === 'status') {
+            setLogs(prev => [...prev, data]);
+            setCurrentStatus(data.message || `正在由 ${data.agent} 处理...`);
+            setProgress(prev => Math.min(prev + 15, 90));
 
-        eventSource.onmessage = (event) => {
-            const data: ResearchEvent = JSON.parse(event.data);
-
-            if (data.type === 'status') {
-                const logEntry: ResearchLogEntry = {
-                    agent: data.agent ?? 'workflow',
-                    message: data.message,
-                    status: data.status,
-                };
-                setLogs(prev => [...prev, logEntry]);
-                setCurrentStatus(data.message || `正在由 ${data.agent ?? 'workflow'} 处理...`);
-                setProgress(prev => Math.min(prev + 15, 90));
-
-                if (data.agent === 'researcher' && data.message) {
-                    const parsed = parseResearcherStats(data.message);
-                    setStats(prev => ({
-                        ...prev,
-                        sourcesFound: parsed.sourcesFound ?? prev.sourcesFound,
-                        dataProcessed: parsed.dataProcessed ?? prev.dataProcessed,
-                    }));
-                } else if (data.agent === 'planner') {
-                    setStats(prev => ({
-                        ...prev,
-                        sectionsCreated: prev.sectionsCreated + 1,
-                    }));
-                }
-            } else if (data.type === 'hitl') {
-                setProgress(100);
-                eventSource.close();
-                setTimeout(() => onComplete(data.outline ?? []), 500);
-            } else if (data.type === 'error') {
-                const nextFailure: ProjectFailure = {
-                    job_id: data.job_id ?? '',
-                    session_id: sessionId,
-                    trigger: data.retry_trigger ?? 'start_workflow',
-                    status: data.status ?? 'error',
-                    current_agent: data.failure_stage ?? data.agent ?? 'workflow',
-                    error_type: data.error_type ?? 'generation_failed',
-                    failure_stage: data.failure_stage ?? data.agent ?? 'workflow',
-                    message: data.user_message ?? data.message ?? '研究过程出错，请重试',
-                    technical_message: data.message ?? '研究过程出错，请重试',
-                    recoverable: data.recoverable ?? true,
-                    retry_available: data.retry_available ?? true,
-                    retry_trigger: data.retry_trigger ?? 'start_workflow',
-                    details: data.details ?? {},
-                    failed_at: data.failed_at ?? null,
-                };
-                setFailure(nextFailure);
-                setError(nextFailure.message);
-                eventSource.close();
+            if (data.agent === 'researcher' && data.message) {
+                const parsed = parseResearcherStats(data.message);
+                setStats(prev => ({
+                    ...prev,
+                    sourcesFound: parsed.sourcesFound ?? prev.sourcesFound,
+                    dataProcessed: parsed.dataProcessed ?? prev.dataProcessed,
+                }));
+            } else if (data.agent === 'planner') {
+                setStats(prev => ({
+                    ...prev,
+                    sectionsCreated: prev.sectionsCreated + 1,
+                }));
             }
-        };
-
-        eventSource.onerror = () => {
-            setFailure(null);
-            setError('连接中断，请检查网络后重试');
-            eventSource.close();
-        };
-
-        return () => eventSource.close();
-    }, [sessionId, sessionAccessToken, onComplete, attemptKey]);
-
-    const handleRetry = async () => {
-        try {
-            setIsRetrying(true);
-            setLogs([]);
-            setStats({
-                sourcesFound: 0,
-                dataProcessed: 0,
-                sectionsCreated: 0,
-            });
-            setCurrentStatus('正在重新发起研究...');
-            setProgress(0);
-            setError(null);
-            await api.retryProjectGeneration(
-                sessionId,
-                failure?.retry_trigger ?? 'start_workflow',
-                sessionAccessToken,
-            );
-            setFailure(null);
-            setAttemptKey((value) => value + 1);
-        } catch (err: unknown) {
-            setError(getErrorMessage(err, '重新发起研究失败'));
-        } finally {
-            setIsRetrying(false);
+        } else if (data.type === 'hitl') {
+            setProgress(100);
+            setTimeout(() => onComplete(data.outline), 500);
+        } else if (data.type === 'error') {
+            setError(data.message || '研究过程出错，请重试');
         }
-    };
+    }, [onComplete]);
+
+    const handleError = useCallback((errMsg: string) => {
+        setError(errMsg);
+    }, []);
+
+    useSSE({
+        url: api.getStartWorkflowUrl(sessionId),
+        onMessage: handleMessage,
+        onError: handleError,
+    });
 
     if (error) {
-        const detailLines = failure
-            ? [
-                `失败阶段：${failure.failure_stage}`,
-                `错误类型：${failure.error_type}`,
-                `技术信息：${failure.technical_message}`,
-            ]
-            : [];
         return (
             <div className="max-w-3xl mx-auto page-enter">
                 <ErrorMessage
-                    title={failure ? '研究任务失败' : '连接异常'}
                     message={error}
-                    details={detailLines}
-                    type={failure ? 'error' : 'network'}
-                    retryLabel={isRetrying ? '重新排队中...' : failure ? '重新排队' : '重新连接'}
-                    onRetry={
-                        failure
-                            ? (failure.retry_available ? handleRetry : undefined)
-                            : () => setAttemptKey((value) => value + 1)
-                    }
+                    type="network"
+                    onRetry={() => window.location.reload()}
                 />
             </div>
         );
