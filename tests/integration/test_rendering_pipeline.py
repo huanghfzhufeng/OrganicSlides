@@ -105,16 +105,16 @@ class TestRenderPathIntegration:
         assert image_path is not None
         assert Path(image_path).exists()
 
-        # Step 2: Create PPTX from images
+        # Step 2: Create PPTX from images (mock subprocess to avoid uv dependency)
         output_pptx = tmp_path / "output.pptx"
-        output_pptx.touch()
-
-        result = create_pptx_from_images(
-            [image_path],
-            str(output_pptx)
-        )
-
-        assert result == str(output_pptx.resolve())
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+            output_pptx.touch()
+            result = create_pptx_from_images(
+                [image_path],
+                str(output_pptx)
+            )
+            assert result == str(output_pptx.resolve())
 
     @patch("subprocess.run")
     def test_mixed_rendering_workflow(self, mock_run, tmp_path):
