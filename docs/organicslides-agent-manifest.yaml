@@ -1,0 +1,139 @@
+version: 1
+team:
+  name: OrganicSlides Core Team
+  objective: >
+    Turn OrganicSlides from a working but fragile demo into a stable,
+    deployable, and maintainable release candidate.
+  coordination:
+    lead_agent: lead
+    backlog_file: docs/organicslides-backlog.md
+    team_doc: docs/organicslides-core-agent-team.md
+  validation_commands:
+    - cd frontend && npm run lint
+    - cd frontend && npm run build
+    - cd frontend && npm test -- --run
+    - ./.venv/bin/pytest tests/unit -q
+    - ./.venv/bin/pytest tests/integration -q
+  agents:
+    - id: lead
+      name: Lead Agent
+      model: gpt-5.2
+      reasoning_effort: high
+      ownership:
+        - docs/organicslides-backlog.md
+        - README.md
+        - TESTING.md
+        - .gitignore
+        - cross-team coordination
+      backlog_items:
+        - OS-001
+        - OS-002
+        - OS-003
+      prompt_source: docs/organicslides-core-agent-team.md#31-lead-agent
+      first_round_tasks:
+        - Repair runtime artifact policy and stop repo pollution.
+        - Align README and TESTING with current startup reality.
+        - Define the canonical local release gate.
+    - id: frontend
+      name: Frontend Product Agent
+      model: gpt-5.4
+      reasoning_effort: medium
+      ownership:
+        - frontend/src/App.tsx
+        - frontend/src/views
+        - frontend/src/components
+        - frontend/src/hooks
+        - frontend/src/__tests__
+      backlog_items:
+        - OS-004
+        - OS-005
+        - OS-006
+        - OS-007
+        - OS-008
+      prompt_source: docs/organicslides-core-agent-team.md#32-frontend-product-agent
+      first_round_tasks:
+        - Fix state reset leakage in App.tsx.
+        - Fix retry reset in GenerationResultView.tsx.
+        - Refactor useSSE.ts to avoid stale handlers.
+        - Replace the highest-risk any types at API and SSE boundaries.
+    - id: backend
+      name: Backend Workflow Agent
+      model: gpt-5.4
+      reasoning_effort: high
+      ownership:
+        - backend/graph.py
+        - backend/state.py
+        - backend/main.py
+        - backend/agents
+        - tests/unit
+        - tests/integration
+      backlog_items:
+        - OS-009
+        - OS-012
+        - OS-013
+        - OS-014
+      prompt_source: docs/organicslides-core-agent-team.md#33-backend-workflow-agent
+      first_round_tasks:
+        - Normalize backend output-directory behavior.
+        - Verify and retire orphan backend modules.
+        - Audit render path and generation state drift.
+        - Write the minimum durable-persistence plan for later rounds.
+    - id: rendering
+      name: Rendering Pipeline Agent
+      model: gpt-5.3-codex
+      reasoning_effort: high
+      ownership:
+        - backend/agents/renderer
+        - backend/services/script_wrappers
+        - huashu-slides
+        - export artifact contract
+      backlog_items:
+        - OS-009
+        - OS-010
+        - OS-011
+        - OS-015
+      prompt_source: docs/organicslides-core-agent-team.md#34-rendering-pipeline-agent
+      first_round_tasks:
+        - Make render path preference explicit end-to-end.
+        - Add render preflight checks.
+        - Clarify artifact ownership and output directory contract.
+        - Remove or document historical export-path assumptions.
+    - id: docs_release_hygiene
+      name: Docs + Release + Repo Hygiene Agent
+      model: gpt-5.4-mini
+      reasoning_effort: medium
+      ownership:
+        - README.md
+        - TESTING.md
+        - .gitignore
+        - release gate documentation
+        - runtime artifact policy
+        - repo hygiene follow-through
+      backlog_items:
+        - OS-001
+        - OS-002
+        - OS-003
+      prompt_source: docs/organicslides-core-agent-team.md#35-docs--release--repo-hygiene-agent
+      first_round_tasks:
+        - Repair .gitignore coverage for runtime artifacts and uploads.
+        - Align README and TESTING with current repo reality.
+        - Document the local release gate and artifact policy.
+        - Prepare low-risk cleanup steps before any destructive removal.
+    - id: qa_review
+      name: QA / Review Agent
+      model: gpt-5.4
+      reasoning_effort: high
+      ownership:
+        - tests
+        - frontend/src/__tests__
+        - release gate
+        - review findings
+      backlog_items:
+        - OS-003
+        - OS-008
+      prompt_source: docs/organicslides-core-agent-team.md#36-qa--review-agent
+      first_round_tasks:
+        - Define the local release gate.
+        - Add regression coverage for reset, retry, and SSE-driven flows.
+        - Review round-1 changes for regressions and missing tests.
+        - Block merge if runtime artifacts or undocumented behavior changes remain.
