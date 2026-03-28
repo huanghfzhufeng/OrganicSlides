@@ -29,8 +29,8 @@ cd OrganicSlides
 # 2. 配置环境变量
 cp .env.example .env
 # 编辑 .env 文件，填入您的 API Keys
-# - OPENAI_API_KEY (GPT-4o 用于内容生成)
-# - GEMINI_API_KEY (Gemini 3 Pro Image 用于图像生成)
+# - MINIMAX_API_KEY (MiniMax 用于内容生成)
+# - IMAGEN_API_KEY (gemini-3.1-flash-image-preview 用于图像生成)
 
 # 3. 启动所有服务
 docker-compose up --build
@@ -49,8 +49,8 @@ docker-compose up --build
 # 后端服务
 cd backend
 pip install -r requirements.txt
-export OPENAI_API_KEY="sk-..."
-export GEMINI_API_KEY="sk-..."
+export MINIMAX_API_KEY="sk-..."
+export IMAGEN_API_KEY="sk-..."
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # 前端应用（新终端）
@@ -399,7 +399,7 @@ DEFAULT_TIMEOUT = 300  # 改为 600（10 分钟）
 5. 批量处理（API 通常提供量大优惠）
 
 **估算成本**:
-- Gemini 3 Pro Image: ~$0.05 - $0.2 per image
+- `gemini-3.1-flash-image-preview`: ~$0.05 - $0.2 per image
 - 10 张幻灯片: $0.5 - $2 USD
 - 100 张幻灯片: $5 - $20 USD
 
