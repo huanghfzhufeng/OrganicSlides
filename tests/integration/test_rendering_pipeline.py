@@ -75,8 +75,8 @@ class TestRenderPathIntegration:
         assert result is not None
         assert result["slide_id"] == "slide-1"
 
-    @patch("subprocess.run")
-    def test_render_path_b_workflow(self, mock_run, tmp_path):
+    @patch("services.script_wrappers.image_gen.genai")
+    def test_render_path_b_workflow(self, mock_genai, tmp_path):
         """Test Path B (Image) rendering workflow"""
         # Path B: Prompt → Image generation → Image-based PPTX
 
@@ -84,9 +84,24 @@ class TestRenderPathIntegration:
 
         # Step 1: Generate image
         output_image = tmp_path / "slide_1.png"
-        output_image.touch()
 
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+        # Mock the Gemini client to return a fake image
+        from PIL import Image
+        fake_img = Image.new("RGB", (1024, 1024), color="blue")
+        mock_part = Mock()
+        mock_part.inline_data = Mock()
+        mock_part.inline_data.data = b""
+        mock_part.text = None
+        import io
+        buf = io.BytesIO()
+        fake_img.save(buf, format="PNG")
+        mock_part.inline_data.data = buf.getvalue()
+
+        mock_response = Mock()
+        mock_response.candidates = [Mock(content=Mock(parts=[mock_part]))]
+        mock_client = Mock()
+        mock_client.models.generate_content.return_value = mock_response
+        mock_genai.Client.return_value = mock_client
 
         image_path = generate_image(
             "A beautiful slide design",
@@ -94,7 +109,8 @@ class TestRenderPathIntegration:
             api_key="test-key"
         )
 
-        assert image_path == str(output_image.resolve())
+        assert image_path is not None
+        assert Path(image_path).exists()
 
         # Step 2: Create PPTX from images
         output_pptx = tmp_path / "output.pptx"
