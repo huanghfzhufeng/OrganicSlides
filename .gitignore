@@ -39,8 +39,6 @@ env/
 # ==================== 环境变量 ====================
 .env
 .env.local
-.env.staging
-.env.production
 .env.*.local
 
 # ==================== Node.js ====================
@@ -81,3 +79,4 @@ redis-data/
 *.tmp
 *.temp
 .cache/
+.gstack/

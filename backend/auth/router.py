@@ -2,7 +2,7 @@
 认证 API 路由
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.postgres import get_db
@@ -10,13 +10,15 @@ from database.models import User
 from auth.schemas import UserRegister, UserLogin, AuthResponse, UserResponse, Token
 from auth.service import AuthService
 from auth.dependencies import get_current_active_user
+from rate_limit import limiter
 
 
 router = APIRouter(prefix="/api/v1/auth", tags=["认证"])
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
-async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, data: UserRegister, db: AsyncSession = Depends(get_db)):
     """
     用户注册
     """
@@ -34,7 +36,8 @@ async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, data: UserLogin, db: AsyncSession = Depends(get_db)):
     """
     用户登录
     """

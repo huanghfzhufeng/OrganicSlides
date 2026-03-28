@@ -3,17 +3,13 @@
 """
 
 from auth.router import router as auth_router
-from auth.dependencies import (
-    get_current_active_user,
-    get_current_operator_user,
-    get_current_user,
-)
+from auth.dependencies import get_current_user, get_current_active_user, get_current_active_user_sse
 from auth.service import AuthService
 
 __all__ = [
     "auth_router",
     "get_current_user",
     "get_current_active_user",
-    "get_current_operator_user",
-    "AuthService"
+    "get_current_active_user_sse",
+    "AuthService",
 ]

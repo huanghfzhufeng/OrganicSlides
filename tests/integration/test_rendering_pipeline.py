@@ -3,8 +3,9 @@
 import json
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from typing import Dict, Any
+from PIL import Image
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
@@ -84,17 +85,22 @@ class TestRenderPathIntegration:
 
         # Step 1: Generate image
         output_image = tmp_path / "slide_1.png"
-        output_image.touch()
+        Image.new("RGB", (1600, 900), color=(240, 240, 240)).save(output_image)
 
         mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
 
-        image_path = generate_image(
-            "A beautiful slide design",
-            str(output_image),
-            api_key="test-key"
-        )
+        with patch(
+            "services.script_wrappers.image_gen._generate_with_genai",
+            return_value=str(output_image.resolve()),
+        ) as mock_generate:
+            image_path = generate_image(
+                "A beautiful slide design",
+                str(output_image),
+                api_key="test-key"
+            )
 
         assert image_path == str(output_image.resolve())
+        mock_generate.assert_called_once()
 
         # Step 2: Create PPTX from images
         output_pptx = tmp_path / "output.pptx"
@@ -117,7 +123,7 @@ class TestRenderPathIntegration:
         html_file.write_text("<html></html>")
 
         image_file = tmp_path / "slide_image.png"
-        image_file.touch()
+        Image.new("RGB", (1600, 900), color=(220, 220, 220)).save(image_file)
 
         # Convert HTML
         slide_data = {
@@ -207,7 +213,7 @@ class TestPPTXAssembly:
         images = []
         for i in range(3):
             img_file = tmp_path / f"slide_{i}.png"
-            img_file.touch()
+            Image.new("RGB", (1600, 900), color=(230, 230, 230)).save(img_file)
             images.append(str(img_file))
 
         # Create PPTX from images
@@ -233,7 +239,7 @@ class TestPPTXAssembly:
         titles = []
         for i in range(3):
             img_file = tmp_path / f"slide_{i}.png"
-            img_file.touch()
+            Image.new("RGB", (1600, 900), color=(200, 200, 200)).save(img_file)
             images.append(str(img_file))
             titles.append(f"Slide Title {i}")
 
