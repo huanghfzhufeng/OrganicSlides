@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from runtime_schemas import build_research_packet, build_style_packet, serialize_models
+from skills.runtime import get_skill_runtime_packet
 
 
 class SlideType(str, Enum):
@@ -60,12 +61,11 @@ class SlideModel:
     title: str
     speaker_notes: str = ""
     elements: List[SlideElement] = field(default_factory=list)
-    # New fields for dual-path rendering
-    visual_type: str = "illustration"    # illustration|chart|flow|quote|data|cover
-    path_hint: str = "auto"              # path_a|path_b|auto
-    image_prompt: Optional[str] = None  # Path B full image prompt (Writer/Visual draft)
-    text_to_render: dict = field(default_factory=dict)  # Exact text for AI rendering
-    html_content: Optional[str] = None  # Path A complete HTML (Visual agent output)
+    visual_type: str = "illustration"
+    path_hint: str = "auto"
+    image_prompt: Optional[str] = None
+    text_to_render: dict = field(default_factory=dict)
+    html_content: Optional[str] = None
 
 
 class PresentationState(TypedDict, total=False):
@@ -76,48 +76,58 @@ class PresentationState(TypedDict, total=False):
     # 会话信息
     session_id: str
     user_intent: str  # 用户原始输入
+    is_thesis_mode: bool  # 答辩PPT模式（上传论文时启用）
+    skill_id: str
+    collaboration_mode: str
+    skill_packet: dict
 
     # RAG 相关
     source_docs: List[dict]  # 检索到的上下文文档
     search_results: List[dict]  # 联网搜索结果
+    needs_web_search: bool
     research_packet: dict       # Validated ResearchPacket
 
     # 策划阶段产物 (HITL 介入点)
-    outline: List[dict]  # Each item: {id, title (assertion), visual_type, path_hint, key_points, notes}
+    outline: List[dict]
     outline_approved: bool
+    slide_blueprint: List[dict]
+    slide_blueprint_approved: bool
+    slide_reviews: List[dict]
+    slide_review_required: bool
+    slide_review_approved: bool
 
     # 撰写与视觉阶段的中间产物
-    slides_data: List[dict]  # Each item: {title, visual_type, path_hint, image_prompt, text_to_render, ...}
+    slides_data: List[dict]
 
     # 视觉风格配置 (新样式系统)
-    style_id: str          # e.g. "snoopy", "neo-brutalism", "nyt-editorial"
-    style_config: dict     # Full style config from style registry
+    style_id: str
+    style_config: dict
     style_packet: dict     # Validated StylePacket
 
     # 视觉风格配置 (旧系统，向后兼容)
     theme_config: dict
 
-    # 视觉总监输出 (Visual agent → RenderPrep → Renderer)
-    slide_render_plans: List[dict]  # Per-slide: {render_path, html_content, image_prompt, ...}
-    render_path: str                # Overall: "path_a" | "path_b" | "mixed"
+    # 视觉总监输出
+    slide_render_plans: List[dict]
+    render_path: str
 
-    # 渲染进度追踪 (RenderPrep 生成，供前端 SSE 消费)
-    render_progress: List[dict]     # Per-slide: {slide_number, total_slides, render_path, status}
+    # 渲染进度追踪
+    render_progress: List[dict]
 
     # 资产生成
-    generated_assets: List[dict]  # 生成的图片/图表
-    slide_files: List[dict]        # Object-backed slide artifacts: [{page_number, path, storage_key, type}, ...]
+    generated_assets: List[dict]
+    slide_files: List[dict]
 
     # 渲染输出
-    pptx_path: str          # 最终文件访问 URL
-    pptx_storage_key: str   # 最终文件对象存储 key
+    pptx_path: str
+    pptx_storage_key: str
 
     # 流程控制
-    current_status: str  # 用于前端进度条
-    current_agent: str   # 当前执行的 Agent
+    current_status: str
+    current_agent: str
     error: Optional[str]
 
-    # 消息历史 (用于 LLM 上下文)
+    # 消息历史
     messages: List[dict]
 
     # Structured output diagnostics
@@ -132,6 +142,10 @@ def create_initial_state(
     theme: str = "organic",
     style_id: Optional[str] = None,
     style_config: Optional[dict] = None,
+    skill_id: Optional[str] = None,
+    collaboration_mode: str = "guided",
+    source_docs: Optional[List[dict]] = None,
+    is_thesis_mode: bool = False,
 ) -> PresentationState:
     """
     创建初始状态。
@@ -139,9 +153,11 @@ def create_initial_state(
     优先使用 style_id + style_config（新样式系统）。
     如果未提供，则回退到旧的 theme 字符串（向后兼容）。
     """
+    skill_runtime_id = skill_id or "huashu-slides"
+    skill_packet_data = get_skill_runtime_packet(skill_runtime_id, collaboration_mode)
+
     if style_id and style_config:
         theme_config: dict = {
-            # New style system fields
             "style_id": style_id,
             "style": style_config.get("id", style_id),
             "name_zh": style_config.get("name_zh", ""),
@@ -154,7 +170,6 @@ def create_initial_state(
             "sample_image_path": style_config.get("sample_image_path", ""),
         }
     else:
-        # Backward-compatible legacy theme
         theme_config = {
             "style": theme,
             "colors": get_theme_colors(theme),
@@ -170,11 +185,21 @@ def create_initial_state(
     return PresentationState(
         session_id=session_id,
         user_intent=user_intent,
-        source_docs=[],
+        is_thesis_mode=is_thesis_mode,
+        skill_id=skill_runtime_id,
+        collaboration_mode=skill_packet_data.get("collaboration_mode", collaboration_mode),
+        skill_packet=skill_packet_data,
+        source_docs=source_docs or [],
         search_results=[],
+        needs_web_search=False,
         research_packet=serialize_models(research_packet),
         outline=[],
         outline_approved=False,
+        slide_blueprint=[],
+        slide_blueprint_approved=False,
+        slide_reviews=[],
+        slide_review_required=False,
+        slide_review_approved=False,
         slides_data=[],
         theme_config=theme_config,
         style_id=style_id or "",
