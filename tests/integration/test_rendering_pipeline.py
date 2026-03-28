@@ -75,8 +75,8 @@ class TestRenderPathIntegration:
         assert result is not None
         assert result["slide_id"] == "slide-1"
 
-    @patch("services.script_wrappers.image_gen.genai")
-    def test_render_path_b_workflow(self, mock_genai, tmp_path):
+    @patch("google.genai.Client")
+    def test_render_path_b_workflow(self, mock_client_cls, tmp_path):
         """Test Path B (Image) rendering workflow"""
         # Path B: Prompt → Image generation → Image-based PPTX
 
@@ -86,22 +86,21 @@ class TestRenderPathIntegration:
         output_image = tmp_path / "slide_1.png"
 
         # Mock the Gemini client to return a fake image
-        from PIL import Image
-        fake_img = Image.new("RGB", (1024, 1024), color="blue")
-        mock_part = Mock()
-        mock_part.inline_data = Mock()
-        mock_part.inline_data.data = b""
-        mock_part.text = None
+        from PIL import Image as PILImage
         import io
+        fake_img = PILImage.new("RGB", (1024, 1024), color="blue")
         buf = io.BytesIO()
         fake_img.save(buf, format="PNG")
-        mock_part.inline_data.data = buf.getvalue()
+
+        mock_part = Mock()
+        mock_part.inline_data = Mock(data=buf.getvalue())
+        mock_part.text = None
 
         mock_response = Mock()
         mock_response.candidates = [Mock(content=Mock(parts=[mock_part]))]
         mock_client = Mock()
         mock_client.models.generate_content.return_value = mock_response
-        mock_genai.Client.return_value = mock_client
+        mock_client_cls.return_value = mock_client
 
         image_path = generate_image(
             "A beautiful slide design",
