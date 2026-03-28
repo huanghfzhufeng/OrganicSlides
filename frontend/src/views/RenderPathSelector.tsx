@@ -60,6 +60,7 @@ const RenderPathSelector: React.FC<RenderPathSelectorProps> = ({ onNext, onBack 
             <div className="text-center mb-10">
                 {onBack && (
                     <button
+                        type="button"
                         onClick={onBack}
                         className="flex items-center gap-1 text-sm text-[#78786C] hover:text-[#5D7052] mb-4 mx-auto transition-colors"
                     >

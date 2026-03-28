@@ -1,13 +1,12 @@
 import React from 'react';
-import { AlertCircle, RefreshCw, XCircle, WifiOff } from 'lucide-react';
+import { RefreshCw, XCircle, WifiOff } from 'lucide-react';
 
 interface ErrorMessageProps {
     title?: string;
     message: string;
     details?: string[];
-    type?: 'error' | 'warning' | 'network';
+    type?: 'error' | 'network';
     onRetry?: () => void;
-    onDismiss?: () => void;
     retryLabel?: string;
     className?: string;
 }
@@ -18,7 +17,6 @@ const ErrorMessage: React.FC<ErrorMessageProps> = ({
     details,
     type = 'error',
     onRetry,
-    onDismiss,
     retryLabel = '重试',
     className = '',
 }) => {
@@ -30,14 +28,6 @@ const ErrorMessage: React.FC<ErrorMessageProps> = ({
             textColor: 'text-red-600',
             iconColor: 'text-red-500',
             buttonBg: 'bg-red-100 hover:bg-red-200',
-        },
-        warning: {
-            icon: AlertCircle,
-            bgColor: 'bg-amber-50',
-            borderColor: 'border-amber-200',
-            textColor: 'text-amber-700',
-            iconColor: 'text-amber-500',
-            buttonBg: 'bg-amber-100 hover:bg-amber-200',
         },
         network: {
             icon: WifiOff,
@@ -74,20 +64,13 @@ const ErrorMessage: React.FC<ErrorMessageProps> = ({
             <div className="flex items-center gap-2 flex-shrink-0">
                 {onRetry && (
                     <button
+                        type="button"
                         onClick={onRetry}
                         className={`${config.buttonBg} ${config.textColor} px-3 py-1.5 rounded-lg text-sm font-bold 
                             flex items-center gap-1.5 transition-colors`}
                     >
                         <RefreshCw size={14} />
                         {retryLabel}
-                    </button>
-                )}
-                {onDismiss && (
-                    <button
-                        onClick={onDismiss}
-                        className={`${config.buttonBg} ${config.textColor} p-1.5 rounded-lg transition-colors`}
-                    >
-                        <XCircle size={16} />
                     </button>
                 )}
             </div>
