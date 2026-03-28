@@ -438,13 +438,13 @@ Run unit tests (no external scripts needed):
 pip install pytest pytest-mock
 
 # Run all tests
-pytest backend/services/script_wrappers/test_wrappers.py -v
+pytest tests/unit/test_script_wrappers.py -v
 
 # Run specific test class
-pytest backend/services/script_wrappers/test_wrappers.py::TestImageGen -v
+pytest tests/unit/test_script_wrappers.py::TestImageGenWrapper -v
 
 # Run with coverage
-pytest backend/services/script_wrappers/test_wrappers.py --cov=backend.services.script_wrappers
+pytest tests/unit/test_script_wrappers.py --cov=backend.services.script_wrappers
 ```
 
 Test coverage:
