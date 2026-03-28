@@ -3,11 +3,13 @@ MAS-PPT 多智能体演示文稿生成系统
 FastAPI 后端服务 - 集成数据库和认证
 """
 
+import hashlib
+import logging
 import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import FastAPI, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -51,6 +53,17 @@ from runtime_schemas import build_style_packet, serialize_models
 from services.object_storage import get_object_storage
 from styles.registry import get_registry
 from styles.recommender import StyleRecommender
+from skills.runtime import get_skill_runtime_packet, list_skill_runtimes
+from agents.blueprint import run as blueprint_agent
+from agents.blueprint.tools import normalize_slide_blueprint, validate_slide_blueprint
+from services.document_parser import parse_document, get_chapter_summary, ALLOWED_EXTENSIONS as DOC_EXTENSIONS
+
+logger = logging.getLogger(__name__)
+
+# File upload constants
+_upload_dir = Path(__file__).parent / "uploads"
+_upload_dir.mkdir(exist_ok=True)
+MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
 
 async def _load_session_state(session_id: str) -> Optional[dict]:
     """Load workflow state from durable PostgreSQL storage only."""
@@ -146,6 +159,35 @@ class StyleUpdate(BaseModel):
     style_id: str
     render_path_preference: str = "auto"  # "auto" | "path_a" | "path_b"
     access_token: Optional[str] = None
+
+
+class WorkflowBlueprintGenerate(BaseModel):
+    session_id: str
+
+
+class BlueprintUpdate(BaseModel):
+    session_id: str
+    slide_blueprint: List[Dict[str, Any]]
+
+    @field_validator("slide_blueprint")
+    @classmethod
+    def blueprint_length_limit(cls, v: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if len(v) > 40:
+            raise ValueError("slide_blueprint must not exceed 40 pages")
+        return v
+
+
+class SlideReviewUpdate(BaseModel):
+    session_id: str
+    page_number: int
+    slide_patch: Dict[str, Any] = {}
+    render_patch: Dict[str, Any] = {}
+    feedback: str = ""
+
+
+class SlideReviewAction(BaseModel):
+    session_id: str
+    page_number: int
 
 
 class RevisionRestoreRequest(BaseModel):
@@ -970,6 +1012,289 @@ async def list_projects(current_user: User = Depends(get_current_active_user), d
             for p in projects
         ]
     }
+
+
+# ==================== 文档上传 ====================
+
+@app.post("/api/v1/document/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+):
+    """上传论文文件（PDF/DOCX），解析为 source_docs 列表。"""
+    if not file.filename:
+        raise HTTPException(status_code=422, detail="文件名不能为空")
+
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in DOC_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"不支持的文件类型: {suffix}，仅支持 PDF 和 DOCX",
+        )
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"文件过大（{len(content) // 1024 // 1024}MB），最大支持 15MB",
+        )
+    if not content:
+        raise HTTPException(status_code=422, detail="文件内容为空")
+
+    file_hash = hashlib.sha256(content).hexdigest()[:16]
+    safe_filename = f"{file_hash}{suffix}"
+    file_path = _upload_dir / safe_filename
+    file_path.write_bytes(content)
+
+    try:
+        source_docs = parse_document(str(file_path), file.filename)
+        chapters = get_chapter_summary(source_docs)
+        return {
+            "document_id": file_hash,
+            "filename": file.filename,
+            "source_docs": source_docs,
+            "chunk_count": len(source_docs),
+            "chapters": chapters,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.exception("Document parsing failed for %s", file.filename)
+        raise HTTPException(status_code=500, detail=f"文档解析失败: {str(e)}")
+
+
+# ==================== Skill Runtime ====================
+
+@app.get("/api/v1/skills")
+async def get_skill_runtimes():
+    """列出当前项目可用的本地 SkillRuntime。"""
+    runtimes = list_skill_runtimes()
+    return {"skills": runtimes, "total": len(runtimes)}
+
+
+@app.get("/api/v1/skills/{skill_id}")
+async def get_skill_runtime_detail(skill_id: str):
+    """获取指定 SkillRuntime 的结构化配置。"""
+    packet = get_skill_runtime_packet(skill_id)
+    if not packet:
+        raise HTTPException(status_code=404, detail=f"Skill not found: {skill_id}")
+    return packet
+
+
+# ==================== 页级蓝图 ====================
+
+@app.post("/api/v1/workflow/blueprint/generate")
+async def generate_blueprint(
+    data: WorkflowBlueprintGenerate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """根据确认后的章节级大纲生成逐页 Slide Blueprint。"""
+    await _authorize_project_access(data.session_id, None, current_user, db)
+    state = await _load_session_state(data.session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not state.get("outline"):
+        raise HTTPException(status_code=422, detail="Outline must be generated before blueprint")
+    if not state.get("outline_approved", False):
+        raise HTTPException(status_code=409, detail="Outline must be approved before blueprint")
+    if state.get("slide_blueprint"):
+        return {
+            "status": state.get("current_status", "blueprint_generated"),
+            "slide_blueprint": state.get("slide_blueprint", []),
+            "approved": state.get("slide_blueprint_approved", False),
+        }
+
+    result = await blueprint_agent(state)
+    payload = {
+        "slide_blueprint": result.get("slide_blueprint", []),
+        "slide_blueprint_approved": False,
+        "current_status": "blueprint_generated",
+        "current_agent": "blueprint_planner",
+    }
+    await _merge_session_state(data.session_id, payload)
+    return {
+        "status": "blueprint_generated",
+        "slide_blueprint": payload["slide_blueprint"],
+        "approved": False,
+    }
+
+
+@app.get("/api/v1/workflow/blueprint/{session_id}")
+async def get_blueprint(
+    session_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取逐页 Slide Blueprint。"""
+    await _authorize_project_access(session_id, None, current_user, db)
+    state = await _load_session_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "slide_blueprint": state.get("slide_blueprint", []),
+        "status": state.get("current_status", "unknown"),
+        "approved": state.get("slide_blueprint_approved", False),
+    }
+
+
+@app.post("/api/v1/workflow/blueprint/update")
+async def update_blueprint(
+    data: BlueprintUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """用户确认或修改逐页 Slide Blueprint。"""
+    await _authorize_project_access(data.session_id, None, current_user, db)
+    state = await _load_session_state(data.session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    outline = state.get("outline", [])
+    if not outline:
+        raise HTTPException(status_code=422, detail="Outline must be generated before blueprint")
+    if not state.get("outline_approved", False):
+        raise HTTPException(status_code=409, detail="Outline must be approved before blueprint")
+
+    normalized_blueprint = normalize_slide_blueprint(data.slide_blueprint)
+    is_valid, message = validate_slide_blueprint(normalized_blueprint, outline)
+    if not is_valid:
+        raise HTTPException(status_code=422, detail=message)
+
+    await _merge_session_state(
+        data.session_id,
+        {
+            "slide_blueprint": normalized_blueprint,
+            "slide_blueprint_approved": True,
+            "current_status": "blueprint_approved",
+        },
+    )
+    return {
+        "status": "blueprint_updated",
+        "slide_blueprint": normalized_blueprint,
+        "approved": True,
+    }
+
+
+# ==================== 协作逐页审阅 ====================
+
+def _build_slide_review_payload(state: dict) -> dict:
+    """Build the slide review response from session state."""
+    slides_data = state.get("slides_data", []) or []
+    render_plans = state.get("slide_render_plans", []) or []
+    reviews = state.get("slide_reviews", []) or []
+
+    review_map: dict = {r["page_number"]: r for r in reviews if "page_number" in r}
+    items = []
+    for slide in slides_data:
+        page = slide.get("page_number", 0)
+        plan = next((p for p in render_plans if p.get("page_number") == page), {})
+        review = review_map.get(page, {})
+        items.append({
+            "page_number": page,
+            "title": slide.get("title", ""),
+            "visual_type": slide.get("visual_type", ""),
+            "path_hint": slide.get("path_hint", "auto"),
+            "render_path": plan.get("render_path", ""),
+            "layout_name": plan.get("layout_name", ""),
+            "bullet_points": slide.get("text_to_render", {}).get("bullets", []),
+            "speaker_notes": slide.get("speaker_notes", ""),
+            "image_prompt": plan.get("image_prompt", ""),
+            "html_content": slide.get("html_content", ""),
+            "style_notes": plan.get("style_notes", ""),
+            "review_status": review.get("status", "pending"),
+            "accepted": review.get("accepted", False),
+            "revision_count": review.get("revision_count", 0),
+            "feedback": review.get("feedback", ""),
+        })
+
+    approved = bool(items) and all(i["accepted"] for i in items)
+    return {
+        "session_id": state.get("session_id", ""),
+        "slides": items,
+        "approved": approved,
+        "status": state.get("current_status", "unknown"),
+    }
+
+
+@app.get("/api/v1/workflow/slide-review/{session_id}")
+async def get_slide_review(
+    session_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get collaborative slide review package."""
+    await _authorize_project_access(session_id, None, current_user, db)
+    state = await _load_session_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return _build_slide_review_payload(state)
+
+
+@app.post("/api/v1/workflow/slide-review/accept")
+async def accept_slide_review(
+    data: SlideReviewAction,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept a single slide during collaborative review."""
+    await _authorize_project_access(data.session_id, None, current_user, db)
+    state = await _load_session_state(data.session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    reviews = list(state.get("slide_reviews") or [])
+    review_map = {r["page_number"]: r for r in reviews if "page_number" in r}
+    review_map[data.page_number] = {
+        **review_map.get(data.page_number, {"page_number": data.page_number, "revision_count": 0, "feedback": ""}),
+        "accepted": True,
+        "status": "accepted",
+    }
+    updated_reviews = list(review_map.values())
+    slides_data = state.get("slides_data") or []
+    approved = bool(slides_data) and len(updated_reviews) == len(slides_data) and all(
+        r.get("accepted", False) for r in updated_reviews
+    )
+    updates = {
+        "slide_reviews": updated_reviews,
+        "slide_review_required": not approved,
+        "slide_review_approved": approved,
+        "current_status": "slide_review_approved" if approved else "waiting_for_slide_review",
+    }
+    await _merge_session_state(data.session_id, updates)
+    updated_state = {**state, **updates}
+    return _build_slide_review_payload(updated_state)
+
+
+# ==================== 幻灯片内容预览 ====================
+
+@app.get("/api/v1/project/{session_id}/slides/preview")
+async def get_slide_content_preview(
+    session_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return slide text content for the frontend preview modal."""
+    await _authorize_project_access(session_id, None, current_user, db)
+    state = await _load_session_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    slides_data = state.get("slides_data") or []
+    slides = [
+        {
+            "page_number": s.get("page_number", i + 1),
+            "title": s.get("title", ""),
+            "content": {
+                "bullet_points": s.get("text_to_render", {}).get("bullets", []),
+            },
+            "speaker_notes": s.get("speaker_notes", ""),
+            "visual_type": s.get("visual_type", ""),
+        }
+        for i, s in enumerate(slides_data)
+    ]
+    return {"slides": slides, "total": len(slides)}
 
 
 if __name__ == "__main__":
