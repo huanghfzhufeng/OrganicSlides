@@ -13,6 +13,10 @@ import GenerationResultView from './views/GenerationResultView';
 import { api, tokenManager, type OutlineItem, type User } from './api/client';
 import { seedlingIcon } from './assets/icons';
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -75,8 +79,8 @@ function App() {
       setSessionId(res.session_id);
       setSessionAccessToken(res.session_access_token);
       setStep(1);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, '项目创建失败'));
     }
   };
 
@@ -94,8 +98,8 @@ function App() {
       setRenderPathPreference(preference);
       await api.updateSessionStyle(sessionId, selectedStyleId, preference, sessionAccessToken);
       setStep(4);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, '风格设置失败'));
     }
   };
 
@@ -105,8 +109,8 @@ function App() {
       await api.updateOutline(sessionId, updatedOutline, sessionAccessToken);
       setOutline(updatedOutline);
       setStep(3);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, '大纲更新失败'));
     }
   };
 
