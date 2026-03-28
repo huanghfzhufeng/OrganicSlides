@@ -75,8 +75,8 @@ class TestRenderPathIntegration:
         assert result is not None
         assert result["slide_id"] == "slide-1"
 
-    @patch("subprocess.run")
-    def test_render_path_b_workflow(self, mock_run, tmp_path):
+    @patch("services.script_wrappers.image_gen._generate_single_candidate")
+    def test_render_path_b_workflow(self, mock_gen_single, tmp_path):
         """Test Path B (Image) rendering workflow"""
         # Path B: Prompt → Image generation → Image-based PPTX
 
@@ -84,9 +84,17 @@ class TestRenderPathIntegration:
 
         # Step 1: Generate image
         output_image = tmp_path / "slide_1.png"
-        output_image.touch()
 
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+        # Mock _generate_single_candidate to write a fake image and return path
+        from PIL import Image as PILImage
+        def fake_generate(**kwargs):
+            img = PILImage.new("RGB", (1600, 900), color="blue")
+            out = Path(kwargs["output_file"])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            img.save(str(out), format="PNG")
+            return str(out)
+
+        mock_gen_single.side_effect = fake_generate
 
         image_path = generate_image(
             "A beautiful slide design",
@@ -94,18 +102,19 @@ class TestRenderPathIntegration:
             api_key="test-key"
         )
 
-        assert image_path == str(output_image.resolve())
+        assert image_path is not None
+        assert Path(image_path).exists()
 
-        # Step 2: Create PPTX from images
+        # Step 2: Create PPTX from images (mock subprocess to avoid uv dependency)
         output_pptx = tmp_path / "output.pptx"
-        output_pptx.touch()
-
-        result = create_pptx_from_images(
-            [image_path],
-            str(output_pptx)
-        )
-
-        assert result == str(output_pptx.resolve())
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+            output_pptx.touch()
+            result = create_pptx_from_images(
+                [image_path],
+                str(output_pptx)
+            )
+            assert result == str(output_pptx.resolve())
 
     @patch("subprocess.run")
     def test_mixed_rendering_workflow(self, mock_run, tmp_path):

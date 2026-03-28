@@ -20,7 +20,7 @@ export GEMINI_API_KEY="your-api-key-here"
 
 ### 脚本 #1: `generate_image.py` — AI 图像生成
 
-**用途**：使用 Google Gemini 3 Pro Image 生成或编辑演示文稿中的图像。
+**用途**：使用 `gemini-3.1-flash-image-preview` 生成或编辑演示文稿中的图像。
 
 **系统要求**：
 - Python ≥ 3.10
@@ -434,7 +434,7 @@ echo "✓ 环境检查完成！"
 **A**: 可以用 shell 循环或 Python 脚本批量调用。示例见"完整工作流"。
 
 ### Q: 图像生成很慢怎么办？
-**A**: Gemini 3 Pro Image 通常需要 20-60 秒生成一张图像。使用更小的分辨率 (1K) 可加速，但会影响质量。
+**A**: `gemini-3.1-flash-image-preview` 通常需要 20-60 秒生成一张图像。使用更小的分辨率 (1K) 可加速，但会影响质量。
 
 ### Q: html2pptx 能保留动画吗？
 **A**: 不能。html2pptx 生成静态 PPT。动画需要在 PowerPoint 或 Keynote 中手工添加。
