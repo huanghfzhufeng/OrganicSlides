@@ -15,13 +15,6 @@ Testing goals:
 
 Every requirement PR must declare and execute the relevant test set.
 
-Current protected checks on `main`:
-
-- [x] `CI-CHECK-001` `frontend-build`
-- [x] `CI-CHECK-002` `frontend-tests`
-- [x] `CI-CHECK-003` `backend-tests`
-  Validation completed on `2026-03-07` and enforced through GitHub branch protection on `main`.
-
 - [ ] `TEST-GATE-001` Lint and typecheck must pass for changed code.
   Completion standard: no ignored failures, no skipped type errors.
 
@@ -155,3 +148,4 @@ A PR is mergeable only when:
 2. no blocked reviewer comments remain
 3. rollback plan is written
 4. the related item in `docs/production-todo.md` is checked
+
