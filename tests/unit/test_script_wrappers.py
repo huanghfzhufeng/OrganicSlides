@@ -3,10 +3,12 @@
 import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
+
+from PIL import Image as PILImage, ImageStat
 
 from services.script_wrappers.image_gen import generate_image, VALID_RESOLUTIONS
 from services.script_wrappers.html_converter import html_to_pptx_slide
@@ -34,7 +36,7 @@ class TestImageGenWrapper:
 
     def test_validate_resolution_valid_values(self):
         """Test that resolution must be from valid set"""
-        for resolution in ["1K", "2K", "4K"]:
+        for resolution in ["0.5K", "1K", "2K", "4K"]:
             # Should not raise
             assert resolution in VALID_RESOLUTIONS
 
@@ -59,13 +61,12 @@ class TestImageGenWrapper:
         with pytest.raises(ValueError, match="API key not provided"):
             generate_image("test prompt", "/tmp/output.png")
 
-    @patch("subprocess.run")
-    def test_successful_image_generation(self, mock_run, tmp_path):
+    @patch("services.script_wrappers.image_gen._generate_with_genai")
+    def test_successful_image_generation(self, mock_generate, tmp_path):
         """Test successful image generation returns path"""
         output_file = tmp_path / "output.png"
-        output_file.touch()  # Create the file
-
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+        PILImage.new("RGB", (1200, 1200), color="white").save(output_file, "PNG")
+        mock_generate.return_value = str(output_file.resolve())
 
         result = generate_image(
             "test prompt",
@@ -74,12 +75,12 @@ class TestImageGenWrapper:
         )
 
         assert result == str(output_file.resolve())
-        mock_run.assert_called_once()
+        mock_generate.assert_called_once()
 
-    @patch("subprocess.run")
-    def test_image_generation_returns_none_on_nonzero_exit(self, mock_run):
-        """Test that non-zero exit code returns None"""
-        mock_run.return_value = Mock(returncode=1, stdout="", stderr="Error")
+    @patch("services.script_wrappers.image_gen._generate_with_genai")
+    def test_image_generation_returns_none_on_nonzero_exit(self, mock_generate):
+        """Test that internal generation errors return None"""
+        mock_generate.side_effect = RuntimeError("Error")
 
         result = generate_image(
             "test prompt",
@@ -89,12 +90,10 @@ class TestImageGenWrapper:
 
         assert result is None
 
-    @patch("subprocess.run")
-    def test_image_generation_file_not_created(self, mock_run, tmp_path):
-        """Test that None is returned if output file doesn't exist"""
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
-
-        # Use a path that will exist but the command will fail to create the file
+    @patch("services.script_wrappers.image_gen._generate_with_genai")
+    def test_image_generation_file_not_created(self, mock_generate, tmp_path):
+        """Test that None is returned if generation yields no output path"""
+        mock_generate.return_value = None
         output_path = tmp_path / "output.png"
 
         result = generate_image(
@@ -103,14 +102,12 @@ class TestImageGenWrapper:
             api_key="test-key"
         )
 
-        # Since the subprocess call succeeds but the file wasn't created, should return None
         assert result is None
 
-    @patch("subprocess.run")
-    def test_image_generation_timeout_handling(self, mock_run):
+    @patch("services.script_wrappers.image_gen._generate_with_genai")
+    def test_image_generation_timeout_handling(self, mock_generate):
         """Test timeout handling"""
-        import subprocess
-        mock_run.side_effect = subprocess.TimeoutExpired("cmd", 300)
+        mock_generate.side_effect = TimeoutError("timed out")
 
         result = generate_image(
             "test prompt",
@@ -120,15 +117,14 @@ class TestImageGenWrapper:
 
         assert result is None
 
-    @patch("subprocess.run")
-    def test_image_gen_command_includes_input_image(self, mock_run, tmp_path):
-        """Test that input_image is included in command if provided"""
+    @patch("services.script_wrappers.image_gen._generate_with_genai")
+    def test_image_gen_command_includes_input_image(self, mock_generate, tmp_path):
+        """Test that input_image is forwarded to the SDK wrapper if provided"""
         input_file = tmp_path / "input.png"
         output_file = tmp_path / "output.png"
-        input_file.touch()
-        output_file.touch()
-
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+        PILImage.new("RGB", (100, 100), color="white").save(input_file, "PNG")
+        PILImage.new("RGB", (1200, 1200), color="white").save(output_file, "PNG")
+        mock_generate.return_value = str(output_file.resolve())
 
         generate_image(
             "test prompt",
@@ -137,10 +133,68 @@ class TestImageGenWrapper:
             api_key="test-key"
         )
 
-        # Check that the command includes --input-image
-        call_args = mock_run.call_args
-        cmd = call_args[0][0]
-        assert "--input-image" in cmd
+        assert mock_generate.call_args.kwargs["input_image"] == str(input_file)
+
+    @patch("services.script_wrappers.image_gen._generate_with_genai")
+    def test_retry_ratio_size_with_12ai_proxy(self, mock_generate, tmp_path):
+        """Test that 12ai ratio sizes retry with a provider-safe resolution."""
+        output_file = tmp_path / "output.png"
+
+        def side_effect(**kwargs):
+            if kwargs["image_size"] == "16:9":
+                raise RuntimeError('{"code":"invalid_value","path":["image_size"]}')
+            PILImage.new("RGB", (1024, 1024), color="white").save(kwargs["output_file"], "PNG")
+            return str(Path(kwargs["output_file"]).resolve())
+
+        mock_generate.side_effect = side_effect
+
+        result = generate_image(
+            "test prompt",
+            str(output_file),
+            api_key="test-key",
+            base_url="https://new.12ai.org",
+            image_size="16:9",
+        )
+
+        assert result == str(output_file.resolve())
+        assert mock_generate.call_count == 2
+        assert mock_generate.call_args.kwargs["image_size"] == "1K"
+
+    @patch("services.script_wrappers.image_gen._generate_with_genai")
+    def test_multiple_candidates_choose_best_image(self, mock_generate, tmp_path):
+        """Test that multiple image candidates are scored and best candidate is kept."""
+        output_file = tmp_path / "output.png"
+
+        def side_effect(**kwargs):
+            destination = Path(kwargs["output_file"])
+            if "candidate_1" in destination.name:
+                PILImage.new("RGB", (1024, 1024), color=(128, 128, 128)).save(destination, "PNG")
+            elif "candidate_2" in destination.name:
+                image = PILImage.new("RGB", (1600, 900), color="black")
+                for x in range(800, 1600):
+                    for y in range(900):
+                        image.putpixel((x, y), (255, 255, 255))
+                image.save(destination, "PNG")
+            else:
+                PILImage.new("RGB", (900, 1600), color=(140, 140, 140)).save(destination, "PNG")
+            return str(destination.resolve())
+
+        mock_generate.side_effect = side_effect
+
+        result = generate_image(
+            "test prompt",
+            str(output_file),
+            api_key="test-key",
+            number_of_images=3,
+        )
+
+        assert result == str(output_file.resolve())
+        assert mock_generate.call_count == 3
+
+        with PILImage.open(output_file) as image:
+            assert image.size == (1600, 900)
+            contrast = ImageStat.Stat(image.convert("L")).stddev[0]
+            assert contrast > 50
 
 
 @pytest.mark.unit
