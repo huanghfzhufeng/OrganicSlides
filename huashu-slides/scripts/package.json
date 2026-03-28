@@ -1,0 +1,10 @@
+{
+  "name": "huashu-slides-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "playwright": "^1.40.0",
+    "pptxgenjs": "^3.12.0",
+    "sharp": "^0.33.0"
+  }
+}
