@@ -50,7 +50,7 @@ def get_skill_runtime_packet(
     skill_root = _PROJECT_ROOT / skill_id
     skill_file = skill_root / "SKILL.md"
     if not skill_file.exists():
-        raise ValueError(f"Unknown skill_id: {skill_id}")
+        return _default_skill_packet(skill_id, collaboration_mode)
 
     markdown = skill_file.read_text(encoding="utf-8")
     front_matter = _parse_front_matter(markdown)
@@ -145,6 +145,37 @@ def build_skill_prompt_packet(skill_packet: dict[str, Any] | None) -> str:
         lines.append("本地参考：" + ", ".join(skill_packet["reference_files"][:5]))
 
     return "\n".join(lines)
+
+
+def _default_skill_packet(
+    skill_id: str, collaboration_mode: str | None = None
+) -> dict[str, Any]:
+    """Return a minimal packet when SKILL.md is not found."""
+    mode = collaboration_mode or "guided"
+    return {
+        "skill_id": skill_id,
+        "name": skill_id,
+        "description": "",
+        "design_philosophy": "Context, not control",
+        "skill_file": "",
+        "root_dir": str(_PROJECT_ROOT / skill_id),
+        "scripts_dir": str(_PROJECT_ROOT / skill_id / "scripts"),
+        "style_samples_dir": str(_PROJECT_ROOT / skill_id / "assets" / "style-samples"),
+        "references_dir": str(_PROJECT_ROOT / skill_id / "references"),
+        "reference_files": [],
+        "supported_collaboration_modes": [
+            {"key": "guided", "label": "Guided", "fit": "", "checkpoints": "", "is_default": True}
+        ],
+        "default_collaboration_mode": "guided",
+        "collaboration_mode": mode,
+        "render_paths": [
+            {"key": "path_a", "label": "Path A", "advantage": "", "best_for": "", "notes": "", "is_default": True},
+            {"key": "path_b", "label": "Path B", "advantage": "", "best_for": "", "notes": "", "is_default": False},
+        ],
+        "default_render_path": "path_a",
+        "runtime_steps": [],
+        "checkpoint_keys": [],
+    }
 
 
 def _parse_front_matter(markdown: str) -> dict[str, str]:
