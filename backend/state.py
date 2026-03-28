@@ -7,7 +7,7 @@ from typing import TypedDict, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
-from runtime_schemas import build_research_packet, build_style_packet, serialize_models
+from skills.runtime import get_skill_runtime_packet
 
 
 class SlideType(str, Enum):
@@ -76,15 +76,24 @@ class PresentationState(TypedDict, total=False):
     # 会话信息
     session_id: str
     user_intent: str  # 用户原始输入
+    is_thesis_mode: bool  # 答辩PPT模式（上传论文时启用）
+    skill_id: str
+    collaboration_mode: str
+    skill_packet: dict
 
     # RAG 相关
     source_docs: List[dict]  # 检索到的上下文文档
     search_results: List[dict]  # 联网搜索结果
-    research_packet: dict       # Validated ResearchPacket
+    needs_web_search: bool
 
     # 策划阶段产物 (HITL 介入点)
     outline: List[dict]  # Each item: {id, title (assertion), visual_type, path_hint, key_points, notes}
     outline_approved: bool
+    slide_blueprint: List[dict]
+    slide_blueprint_approved: bool
+    slide_reviews: List[dict]
+    slide_review_required: bool
+    slide_review_approved: bool
 
     # 撰写与视觉阶段的中间产物
     slides_data: List[dict]  # Each item: {title, visual_type, path_hint, image_prompt, text_to_render, ...}
@@ -92,7 +101,6 @@ class PresentationState(TypedDict, total=False):
     # 视觉风格配置 (新样式系统)
     style_id: str          # e.g. "snoopy", "neo-brutalism", "nyt-editorial"
     style_config: dict     # Full style config from style registry
-    style_packet: dict     # Validated StylePacket
 
     # 视觉风格配置 (旧系统，向后兼容)
     theme_config: dict
@@ -106,11 +114,10 @@ class PresentationState(TypedDict, total=False):
 
     # 资产生成
     generated_assets: List[dict]  # 生成的图片/图表
-    slide_files: List[dict]        # Object-backed slide artifacts: [{page_number, path, storage_key, type}, ...]
+    slide_files: List[dict]        # Intermediate files: [{page_number, path, type}, ...]
 
     # 渲染输出
-    pptx_path: str          # 最终文件访问 URL
-    pptx_storage_key: str   # 最终文件对象存储 key
+    pptx_path: str  # 最终文件路径
 
     # 流程控制
     current_status: str  # 用于前端进度条
@@ -120,11 +127,6 @@ class PresentationState(TypedDict, total=False):
     # 消息历史 (用于 LLM 上下文)
     messages: List[dict]
 
-    # Structured output diagnostics
-    planner_diagnostics: dict
-    writer_diagnostics: dict
-    visual_diagnostics: dict
-
 
 def create_initial_state(
     session_id: str,
@@ -132,13 +134,24 @@ def create_initial_state(
     theme: str = "organic",
     style_id: Optional[str] = None,
     style_config: Optional[dict] = None,
+    skill_id: Optional[str] = None,
+    collaboration_mode: str = "guided",
+    source_docs: Optional[List[dict]] = None,
+    is_thesis_mode: bool = False,
 ) -> PresentationState:
     """
     创建初始状态。
 
     优先使用 style_id + style_config（新样式系统）。
     如果未提供，则回退到旧的 theme 字符串（向后兼容）。
+
+    Args:
+        source_docs: 预解析的论文文档 chunks（论文上传模式）
+        is_thesis_mode: 是否为答辩PPT模式
     """
+    skill_runtime_id = skill_id or "huashu-slides"
+    skill_packet = get_skill_runtime_packet(skill_runtime_id, collaboration_mode)
+
     if style_id and style_config:
         theme_config: dict = {
             # New style system fields
@@ -160,40 +173,37 @@ def create_initial_state(
             "colors": get_theme_colors(theme),
         }
 
-    research_packet = build_research_packet(user_intent, [], [])
-    style_packet = build_style_packet(
-        style_id=style_id or theme_config.get("style", ""),
-        style_config=style_config or {},
-        theme_config=theme_config,
-    )
-
     return PresentationState(
         session_id=session_id,
         user_intent=user_intent,
-        source_docs=[],
+        is_thesis_mode=is_thesis_mode,
+        skill_id=skill_runtime_id,
+        collaboration_mode=skill_packet.get("collaboration_mode", collaboration_mode),
+        skill_packet=skill_packet,
+        source_docs=source_docs or [],
         search_results=[],
-        research_packet=serialize_models(research_packet),
+        needs_web_search=False,
         outline=[],
         outline_approved=False,
+        slide_blueprint=[],
+        slide_blueprint_approved=False,
+        slide_reviews=[],
+        slide_review_required=False,
+        slide_review_approved=False,
         slides_data=[],
         theme_config=theme_config,
         style_id=style_id or "",
         style_config=style_config or {},
-        style_packet=serialize_models(style_packet),
         slide_render_plans=[],
         render_path="path_a",
         render_progress=[],
         generated_assets=[],
         slide_files=[],
         pptx_path="",
-        pptx_storage_key="",
         current_status="initialized",
         current_agent="",
         error=None,
-        messages=[],
-        planner_diagnostics={},
-        writer_diagnostics={},
-        visual_diagnostics={},
+        messages=[]
     )
 
 
