@@ -84,9 +84,9 @@ const InputView: React.FC<InputViewProps> = ({ prompt, setPrompt, onNext }) => (
                 className="w-full h-32 bg-transparent border-none focus:ring-0 focus:outline-none p-6 resize-none text-xl text-[#2C2C24] placeholder-[#78786C]/40 font-nunito"
             />
             <div className="flex justify-between items-center px-4 pb-2 pt-2">
-                <button className="text-[#C18C5D] text-sm font-bold hover:text-[#A85448] transition-colors flex items-center gap-1.5 ripple-btn px-3 py-1.5 rounded-lg hover:bg-[#C18C5D]/10">
-                    <Globe size={16} /> 启用联网搜索
-                </button>
+                <div className="text-[#C18C5D] text-sm font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#C18C5D]/10">
+                    <Globe size={16} /> 将自动启用联网搜索
+                </div>
                 <BlobButton onClick={onNext} disabled={!prompt.trim()} icon={ArrowRight}>
                     开始研究
                 </BlobButton>
