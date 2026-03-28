@@ -5,10 +5,13 @@
 
 from functools import lru_cache
 from pathlib import Path
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
 
 ROOT_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+
+_DEFAULT_JWT_SECRET = "your-super-secret-key-change-in-production"
 
 
 class Settings(BaseSettings):
@@ -31,9 +34,10 @@ class Settings(BaseSettings):
     BACKEND_PORT: int = 18000
 
     # JWT 认证
-    JWT_SECRET_KEY: str = ""
+    JWT_SECRET_KEY: str = _DEFAULT_JWT_SECRET
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 小时
+    OPERATOR_EMAILS: str = ""
 
     # LLM (MiniMax via OpenAI-compatible API)
     MINIMAX_API_KEY: str = ""
@@ -50,7 +54,7 @@ class Settings(BaseSettings):
     # 新闻搜索
     NEWS_API_KEY: str = ""
 
-    # 兼容旧配置（保留但不再使用）
+    # 兼容旧配置
     OPENAI_API_KEY: Optional[str] = None
     GEMINI_API_KEY: str = ""
 
@@ -62,28 +66,51 @@ class Settings(BaseSettings):
     # 应用配置
     APP_ENV: str = "development"
     DEBUG: bool = True
+    WORKER_QUEUE_POLL_INTERVAL_SECONDS: float = 1.0
+    WORKER_JOB_STALE_SECONDS: int = 120
+    WORKER_JOB_HEARTBEAT_SECONDS: int = 15
+
+    # 对象存储
+    OBJECT_STORAGE_BACKEND: str = "local"  # "local" | "s3"
+    OBJECT_STORAGE_LOCAL_ROOT: str = "object_storage"
+    OBJECT_STORAGE_PUBLIC_BASE_URL: str = "http://localhost:8000/api/v1/assets"
+    OBJECT_STORAGE_BUCKET: str = "masppt-assets"
+    OBJECT_STORAGE_ENDPOINT_URL: str = "http://127.0.0.1:9000"
+    OBJECT_STORAGE_ACCESS_KEY: str = "minioadmin"
+    OBJECT_STORAGE_SECRET_KEY: str = "minioadmin"
+    OBJECT_STORAGE_REGION: str = "us-east-1"
+    OBJECT_STORAGE_SECURE: bool = False
+
+    # 资产保留与清理
+    ASSET_RETENTION_HOURS: int = 168
+    ASSET_CLEANUP_INTERVAL_SECONDS: int = 300
+    ASSET_CLEANUP_BATCH_SIZE: int = 100
+
+    @model_validator(mode="after")
+    def validate_environment(self) -> "Settings":
+        self.APP_ENV = self.APP_ENV.lower()
+        valid_envs = {"development", "staging", "production"}
+        if self.APP_ENV not in valid_envs:
+            raise ValueError(f"APP_ENV must be one of {sorted(valid_envs)}")
+
+        if self.APP_ENV in {"staging", "production"}:
+            if self.DEBUG:
+                raise ValueError(f"DEBUG must be false when APP_ENV={self.APP_ENV}")
+            if self.JWT_SECRET_KEY == _DEFAULT_JWT_SECRET:
+                raise ValueError(
+                    f"JWT_SECRET_KEY must be overridden when APP_ENV={self.APP_ENV}"
+                )
+            if self.OBJECT_STORAGE_BACKEND.lower() == "local":
+                raise ValueError(
+                    f"OBJECT_STORAGE_BACKEND must not be 'local' when APP_ENV={self.APP_ENV}"
+                )
+
+        return self
 
     class Config:
-        env_file = str(ROOT_ENV_FILE)  # 始终从项目根目录读取
+        env_file = str(ROOT_ENV_FILE)
         env_file_encoding = "utf-8"
         case_sensitive = True
-
-
-    def validate_settings(self) -> None:
-        """Warn or raise if critical settings are missing or insecure."""
-        import logging
-        _logger = logging.getLogger(__name__)
-
-        if not self.JWT_SECRET_KEY or self.JWT_SECRET_KEY == "your-super-secret-key-change-in-production":
-            if self.APP_ENV == "production":
-                raise RuntimeError(
-                    "JWT_SECRET_KEY must be set to a strong secret value. "
-                    "Set the JWT_SECRET_KEY environment variable before starting the server."
-                )
-            _logger.warning(
-                "⚠️  JWT_SECRET_KEY is empty or insecure. "
-                "This is acceptable for development, but MUST be set in production."
-            )
 
 
 @lru_cache()
