@@ -227,11 +227,11 @@ docker-compose up --build
 
 Staging / Production 部署方式见：
 
-- [docs/deployment-environments.md](/tmp/organicslides-req004/docs/deployment-environments.md)
-- `.env.staging.example`
-- `.env.production.example`
-- `docker-compose.staging.yml`
-- `docker-compose.production.yml`
+- [docs/deployment-environments.md](docs/deployment-environments.md)
+- [.env.staging.example](.env.staging.example)
+- [.env.production.example](.env.production.example)
+- [docker-compose.staging.yml](docker-compose.staging.yml)
+- [docker-compose.production.yml](docker-compose.production.yml)
 
 ### 4. 访问应用
 
