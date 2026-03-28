@@ -8,30 +8,20 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-from pydantic import ValidationError
 
-from agents.writer.prompts import (
-    WRITER_REPAIR_SYSTEM_PROMPT,
-    WRITER_REPAIR_USER_TEMPLATE,
-    WRITER_SYSTEM_PROMPT,
-    WRITER_USER_TEMPLATE,
-)
+from agents.writer.prompts import WRITER_SYSTEM_PROMPT, WRITER_USER_TEMPLATE
 from agents.writer.tools import (
-    evaluate_slide_quality,
+    format_blueprint_for_prompt,
     format_outline_for_prompt,
     format_docs_for_context,
     build_style_context,
     validate_slides_content,
+    create_default_slides_from_blueprint,
+    create_default_slides_from_outline,
 )
-from agents.base import get_llm, create_system_message
-from agents.structured_output import extract_json_payload, resolve_structured_output
-from runtime_schemas import (
-    build_research_packet,
-    build_style_packet,
-    serialize_models,
-    validate_slide_specs,
-    validation_error_message,
-)
+from agents.base import get_llm, create_system_message, strip_thinking_tags
+from agents.base import extract_json_payload
+from skills.runtime import build_skill_prompt_packet
 
 
 async def run(state: dict) -> dict[str, Any]:
@@ -39,61 +29,52 @@ async def run(state: dict) -> dict[str, Any]:
     撰写 Agent 入口函数
     根据大纲生成每页内容，含 image_prompt 和 path_hint
     """
-    llm = get_llm(model="gpt-4o", temperature=0.7)
+    llm = get_llm(temperature=0.7)
 
     outline = state.get("outline", [])
+    slide_blueprint = state.get("slide_blueprint", [])
     user_intent = state.get("user_intent", "")
-    try:
-        research_packet = build_research_packet(
-            user_intent,
-            state.get("research_packet", {}).get("source_docs", state.get("source_docs", [])),
-            state.get("research_packet", {}).get("search_results", state.get("search_results", [])),
-        )
-        style_packet = build_style_packet(
-            style_id=state.get("style_id", ""),
-            style_config=state.get("style_packet", state.get("style_config", {})),
-            theme_config=state.get("theme_config", {}),
-        )
-    except ValidationError as exc:
-        message = validation_error_message(exc)
+    source_docs = state.get("source_docs", [])
+    skill_context = build_skill_prompt_packet(state.get("skill_packet"))
+    style_config = state.get("style_config", {}) or {}
+    theme_config = state.get("theme_config", {}) or {}
+    if not style_config and theme_config.get("style_id"):
+        # Style is selected in step 3 and stored in theme_config for backward compat.
+        # Fall back so Writer can still emit style-aware image_prompt.
+        style_config = dict(theme_config)
+
+    style_id = (
+        state.get("style_id")
+        or style_config.get("id")
+        or style_config.get("style_id")
+        or style_config.get("style", "")
+    )
+
+    plan_items = slide_blueprint or outline
+
+    if not plan_items:
         return {
             "slides_data": [],
             "current_status": "writer_error",
             "current_agent": "writer",
-            "error": f"运行时 schema 校验失败: {message}",
+            "error": "没有页级策划可以撰写",
             "messages": state.get("messages", []) + [
-                {
-                    "role": "assistant",
-                    "content": f"撰稿人输入校验失败：{message}",
-                    "agent": "writer",
-                }
-            ],
-        }
-
-    source_docs = serialize_models(research_packet.source_docs)
-    style_id = style_packet.style_id
-    style_config = serialize_models(style_packet)
-
-    if not outline:
-        return {
-            "slides_data": [],
-            "current_status": "writer_error",
-            "current_agent": "writer",
-            "error": "没有大纲可以撰写",
-            "messages": state.get("messages", []) + [
-                {"role": "assistant", "content": "撰稿人：缺少大纲内容", "agent": "writer"}
+                {"role": "assistant", "content": "撰稿人：缺少页级策划内容", "agent": "writer"}
             ]
         }
 
     # 准备提示语
     outline_text = format_outline_for_prompt(outline)
+    blueprint_text = format_blueprint_for_prompt(slide_blueprint)
     research_context = format_docs_for_context(source_docs)
-    style_context = build_style_context(style_config)
+    style_context = build_style_context(style_id, style_config, user_intent)
 
     user_message = WRITER_USER_TEMPLATE.format(
         user_intent=user_intent,
+        skill_context=skill_context,
         style_context=style_context,
         outline_text=outline_text,
+        blueprint_text=blueprint_text,
         research_context=research_context,
     )
 
@@ -104,98 +85,73 @@ async def run(state: dict) -> dict[str, Any]:
 
     response = await llm.ainvoke(messages)
 
-    result = await resolve_structured_output(
-        llm=llm,
-        raw_content=response.content,
-        parser=_parse_slides_response,
-        validator=lambda slides: _validate_slide_specs_response(slides, outline, style_config),
-        repair_system_prompt=WRITER_REPAIR_SYSTEM_PROMPT,
-        repair_user_template=WRITER_REPAIR_USER_TEMPLATE,
-        repair_context={
-            "user_intent": user_intent,
-            "outline_text": outline_text,
-            "style_context": style_context,
-        },
-    )
+    # 解析响应（剥离推理标签）
+    raw_content = strip_thinking_tags(response.content)
+    slides_data = _parse_slides_response(raw_content, slide_blueprint or outline)
 
-    if not result.success:
-        return {
-            "slides_data": [],
-            "current_status": "writer_error",
-            "current_agent": "writer",
-            "error": f"撰稿输出无法修复: {result.error}",
-            "writer_diagnostics": {
-                "repair_attempted": len(result.attempts) > 1,
-                "attempts": result.attempts,
-            },
-            "messages": state.get("messages", []) + [
-                {
-                    "role": "assistant",
-                    "content": f"撰稿人输出修复失败：{result.error}",
-                    "agent": "writer",
-                }
-            ],
-        }
+    # 验证内容
+    is_valid, msg = validate_slides_content(slides_data, outline=slide_blueprint or outline)
+    if not is_valid:
+        repaired = await _repair_slides(
+            llm=llm,
+            base_messages=messages,
+            invalid_reason=msg,
+            outline=slide_blueprint or outline,
+        )
+        if repaired:
+            slides_data = repaired
+            is_valid, msg = validate_slides_content(slides_data, outline=slide_blueprint or outline)
 
-    slide_specs = validate_slide_specs(result.value)
-    slides_data = serialize_models(slide_specs)
+    if not is_valid:
+        if slide_blueprint:
+            slides_data = create_default_slides_from_blueprint(slide_blueprint)
+        else:
+            slides_data = create_default_slides_from_outline(outline)
 
     return {
         "slides_data": slides_data,
-        "research_packet": serialize_models(research_packet),
-        "style_packet": style_config,
-        "source_docs": source_docs,
-        "style_id": style_id,
-        "style_config": style_config,
         "current_status": "content_written",
         "current_agent": "writer",
-        "writer_diagnostics": {
-            "repair_attempted": len(result.attempts) > 1,
-            "attempts": result.attempts,
-        },
         "messages": state.get("messages", []) + [
             {
                 "role": "assistant",
-                "content": _build_success_message(slides_data, result.repaired),
+                "content": f"撰稿人已完成 {len(slides_data)} 页内容撰写",
                 "agent": "writer"
             }
         ]
     }
 
 
-def _parse_slides_response(content: str) -> list:
+def _parse_slides_response(content: str, outline: list) -> list:
     """解析 LLM 响应中的幻灯片内容"""
-    json_str = extract_json_payload(content)
-    slides = json.loads(json_str)
-    if not isinstance(slides, list):
-        raise ValueError("writer output must be a JSON array")
-    return slides
-
-
-def _build_success_message(slides_data: list, repaired: bool) -> str:
-    action = "修复并完成" if repaired else "已完成"
-    return f"撰稿人{action} {len(slides_data)} 页内容撰写"
-
-
-def _validate_slide_specs_response(
-    slides: list,
-    outline: list | None = None,
-    style_config: dict | None = None,
-) -> tuple[bool, str]:
-    is_valid, message = validate_slides_content(slides, style_config)
-    if not is_valid:
-        return is_valid, message
-
-    quality_is_valid, quality_message = evaluate_slide_quality(
-        slides,
-        outline=outline,
-        style_config=style_config,
-    )
-    if not quality_is_valid:
-        return False, quality_message
-
     try:
-        validate_slide_specs(slides)
-    except ValidationError as exc:
-        return False, validation_error_message(exc)
-    return True, "验证通过"
+        json_str = extract_json_payload(content)
+        result = json.loads(json_str)
+        if isinstance(result, dict):
+            return result.get("slides", [])
+        return result
+
+    except (json.JSONDecodeError, IndexError):
+        return create_default_slides_from_outline(outline)
+
+
+async def _repair_slides(
+    llm,
+    base_messages: list,
+    invalid_reason: str,
+    outline: list,
+) -> list:
+    repair_message = HumanMessage(
+        content=(
+            "你上一次输出的幻灯片内容无效，原因如下：\n"
+            f"{invalid_reason}\n\n"
+            "请重新输出合法 JSON 数组，要求：\n"
+            "1. 页数必须与大纲完全一致\n"
+            "2. 需要 image_prompt 的页面必须提供 image_prompt\n"
+            "3. path_b 的 image_prompt 只能描述情绪和场景，禁止布局词\n"
+            "4. 每页最多 4 条短要点\n"
+            "5. 只返回 JSON，不要 markdown 代码块"
+        )
+    )
+    response = await llm.ainvoke([*base_messages, repair_message])
+    return _parse_slides_response(strip_thinking_tags(response.content), outline)

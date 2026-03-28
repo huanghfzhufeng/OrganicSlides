@@ -12,14 +12,6 @@ VISUAL_SYSTEM_PROMPT = """你是演示文稿视觉总监，同时是渲染路径
 2. **Path A slides**：生成完整的 HTML（严格遵守 html2pptx 4 条硬性约束）
 3. **Path B slides**：根据风格系统完善 image_prompt，写成完整的 Path B 提示词
 
-## StylePacket 约束
-
-- 必须遵守当前 StylePacket 的风格摘要、设计原则、样例素材和参考来源
-- 如果 StylePacket 明确指定支持路径，只能在这些路径中选择 render_path
-- 如果 StylePacket 给出了 Path B 必填段落，image_prompt 必须显式包含这些段落标题
-- 如果 StylePacket 给出了 Path B 禁用词，image_prompt 绝对不能出现这些词
-- 如果存在样例素材路径，把它当作视觉参考的第一优先级来源
-
 ---
 
 ## 渲染路径选择规则
@@ -104,14 +96,6 @@ background: #FF6B6B;
 </html>
 ```
 
-## 质量门禁
-
-- Path A HTML 必须包含 doctype、`<body>`、固定 `720pt x 405pt` 画布、以及精确标题文字
-- Path A HTML 不能使用 `linear-gradient`、`background-image`，也不能把裸文本直接放进 `<div>`
-- Path B prompt 的 `Visual Reference`、`Base Style`、`Design Intent`、`Text to Render`、`Visual Narrative` 都必须是有内容的完整段落
-- Path B 的 `Text to Render` 段落必须包含本页精确标题
-- `render_path` 必须服从当前 slide 类型和 StylePacket 的渲染策略
-
 ---
 
 ## Path B Image Prompt 完整结构
@@ -171,9 +155,13 @@ VISUAL_USER_TEMPLATE = """请为以下幻灯片确定视觉设计方案：
 {style_config_json}
 </风格系统>
 
-<StylePacket 摘要>
-{style_context}
-</StylePacket 摘要>
+<Skill Runtime>
+{skill_context}
+</Skill Runtime>
+
+<风格知识包>
+{style_packet}
+</风格知识包>
 
 <基础风格提示词>
 {base_style_prompt}
@@ -190,49 +178,6 @@ VISUAL_USER_TEMPLATE = """请为以下幻灯片确定视觉设计方案：
 4. 应用风格系统的色彩（使用 style_config 中的具体 hex 值，不要使用渐变）
 5. 标题必须保持断言句形式（不得简化为主题词）
 6. html_content 中的中文字体使用 system-ui 或 PingFang SC
-7. Path B 页面必须遵守 StylePacket 的必填段落和禁用词
-8. 不得输出当前风格不支持的 render_path
-9. Path A 和 Path B 都必须通过上面的质量门禁，不允许只满足“字段不为空”
+7. 必须优先遵守“风格知识包”中的路径建议、视觉原则、适用场景和禁忌
 
 请为每张幻灯片输出 JSON 数组。"""
-
-
-VISUAL_REPAIR_SYSTEM_PROMPT = """你是演示文稿视觉方案输出的 JSON 修复器。
-
-你的唯一任务是把无效输出修复成合法 JSON 数组。
-
-要求：
-1. 只输出 JSON，不要加解释。
-2. 保留每一页的页序，不要删页或合并页。
-3. `render_path=path_a` 时必须提供 `html_content`。
-4. `render_path=path_b` 时必须提供 `image_prompt`。
-5. 不得输出 `path_a`/`path_b` 之外的渲染路径。
-6. 必须遵守当前 StylePacket 的路径限制、Path B 必填段落和禁用词。
-7. Path A HTML 必须带 doctype、固定画布、精确标题，且不能使用 gradients/background-image/raw text div。
-8. Path B prompt 的五个核心段落都必须有足够内容，且 `Text to Render` 必须包含精确标题。
-"""
-
-
-VISUAL_REPAIR_USER_TEMPLATE = """请修复下面这个 Visual 输出。
-
-<风格系统>
-{style_config_json}
-</风格系统>
-
-<StylePacket 摘要>
-{style_context}
-</StylePacket 摘要>
-
-<幻灯片内容>
-{slides_summary}
-</幻灯片内容>
-
-<原始输出>
-{raw_output}
-</原始输出>
-
-<失败原因>
-{failure_reason}
-</失败原因>
-
-请输出合法 JSON 数组，结构必须符合 visual 输出格式。"""

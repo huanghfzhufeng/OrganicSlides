@@ -19,17 +19,16 @@ render_slide() chooses the path based on:
 
 from __future__ import annotations
 
+import html
 import json
 import logging
-import os
 import subprocess
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional
 
 from config import settings
-from rendering_policy import enforce_render_path_preference
+from skills.runtime import get_skill_runtime_packet
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +36,9 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# Scripts location (relative to project root, where the server runs from)
-_SCRIPTS_DIR = Path(settings.SKILL_SCRIPTS_DIR)
+# Scripts location (resolved from SkillRuntime first, settings second)
+_SKILL_PACKET = get_skill_runtime_packet()
+_SCRIPTS_DIR = Path(_SKILL_PACKET.get("scripts_dir") or settings.SKILL_SCRIPTS_DIR)
 _HTML2PPTX_RUNNER = _SCRIPTS_DIR / "html2pptx_runner.js"
 
 # Temporary output directory for intermediate files
@@ -47,7 +47,6 @@ _TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 # Timeouts (seconds)
 _HTML_CONVERT_TIMEOUT = 120
-_IMAGE_GEN_TIMEOUT = 90
 
 
 # ---------------------------------------------------------------------------
@@ -101,12 +100,9 @@ def _choose_render_path(slide_data: dict, style_config: dict) -> str:
       2. First entry in style_config['render_paths']
       3. RENDER_PATH_DEFAULT setting (default "auto" → path_a)
     """
-    preference_applied = enforce_render_path_preference(
-        slide_data.get("render_path", "auto"),
-        style_config,
-    )
-    if preference_applied in ("path_a", "path_b"):
-        return preference_applied
+    override = slide_data.get("render_path")
+    if override in ("path_a", "path_b"):
+        return override
 
     style_paths = style_config.get("render_paths", [])
     if style_paths:
@@ -247,9 +243,20 @@ def _build_minimal_html(slide_data: dict) -> str:
     title = slide_data.get("title", "")
     content = slide_data.get("content", {})
     bullet_points = content.get("bullet_points", [])
+    speaker_notes = slide_data.get("speaker_notes", "")
 
-    bullets_html = "".join(f"<li>{bp}</li>" for bp in bullet_points)
+    # Use color_system if available
+    colors = slide_data.get("color_system", {})
+    bg_color = colors.get("background", "#FDFCF8")
+    text_color = colors.get("text", "#2C2C24")
+    accent_color = colors.get("accent", "#5D7052")
+
+    safe_title = html.escape(title)
+    bullets_html = "".join(f"<li>{html.escape(str(bp))}</li>" for bp in bullet_points)
     bullet_block = f"<ul>{bullets_html}</ul>" if bullet_points else ""
+
+    # Add notes as a hidden data attribute for reference
+    notes_attr = f' data-notes="{html.escape(speaker_notes[:200])}"' if speaker_notes else ""
 
     return f"""<!DOCTYPE html>
 <html>
@@ -258,19 +265,20 @@ def _build_minimal_html(slide_data: dict) -> str:
 <style>
   body {{
     width: 1280px; height: 720px; margin: 0; padding: 0;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
-    background: #FDFCF8;
+    font-family: 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: {bg_color};
     display: flex; flex-direction: column;
     justify-content: center; align-items: flex-start;
     box-sizing: border-box; padding: 80px;
   }}
-  h1 {{ font-size: 48px; color: #2C2C24; margin: 0 0 40px 0; }}
-  ul {{ font-size: 28px; color: #2C2C24; margin: 0; padding-left: 40px; }}
-  li {{ margin-bottom: 16px; }}
+  h1 {{ font-size: 44px; color: {text_color}; margin: 0 0 40px 0; line-height: 1.3; }}
+  ul {{ font-size: 26px; color: {text_color}; margin: 0; padding-left: 40px; }}
+  li {{ margin-bottom: 16px; line-height: 1.5; }}
+  li::marker {{ color: {accent_color}; }}
 </style>
 </head>
-<body>
-  <h1>{title}</h1>
+<body{notes_attr}>
+  <h1>{safe_title}</h1>
   {bullet_block}
 </body>
 </html>"""
@@ -288,7 +296,9 @@ def render_path_b(
     """
     Generate an AI illustration for the slide, then return the image path.
 
-    The image will later be assembled into PPTX by pptx_assembler.
+    Uses google-genai SDK directly (via script_wrappers/image_gen.py) with
+    the 12ai proxy configured in settings.
+
     Returns SlideRenderResult with output_path pointing to a .png file.
     """
     run_id = uuid.uuid4().hex[:8]
@@ -300,69 +310,56 @@ def render_path_b(
     # Resolve style sample image (used as input reference)
     style_sample = _resolve_style_sample(style_config)
 
-    # Get Gemini API key
-    api_key = settings.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+    # Check API key
+    api_key = settings.IMAGEN_API_KEY or settings.GEMINI_API_KEY
     if not api_key:
         return SlideRenderResult(
             slide_index=slide_index,
             render_path="path_b",
-            error="GEMINI_API_KEY is not configured — cannot generate image",
+            error="IMAGEN_API_KEY is not configured — cannot generate image",
         )
 
-    script_path = _SCRIPTS_DIR / "generate_image.py"
-    if not script_path.exists():
-        return SlideRenderResult(
-            slide_index=slide_index,
-            render_path="path_b",
-            error=f"generate_image.py not found at {script_path}",
-        )
-
-    cmd = [
-        "uv", "run", str(script_path),
-        "--prompt", prompt,
-        "--filename", str(output_png),
-        "--resolution", "1K",
-    ]
-    if style_sample:
-        cmd += ["--input-image", style_sample]
-
-    env = {**os.environ, "GEMINI_API_KEY": api_key}
     logger.info("Path B: generating slide %d image → %s", slide_index, output_png.name)
+
+    from services.script_wrappers.image_gen import generate_image
 
     for attempt in range(2):
         try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=_IMAGE_GEN_TIMEOUT,
-                env=env,
+            result_path = generate_image(
+                prompt=prompt,
+                output_path=str(output_png),
+                input_image=style_sample,
+                api_key=api_key,
+                base_url=settings.IMAGEN_BASE_URL,
+                model=settings.IMAGEN_MODEL,
+                image_size=settings.IMAGEN_IMAGE_SIZE,
+                number_of_images=settings.IMAGEN_NUMBER_OF_IMAGES,
             )
 
-            if proc.returncode == 0 and output_png.exists():
+            if result_path and output_png.exists():
                 logger.info("Path B: slide %d image ready", slide_index)
                 return SlideRenderResult(
                     slide_index=slide_index,
                     render_path="path_b",
-                    output_path=str(output_png),
+                    output_path=result_path,
                 )
 
-            err = proc.stderr.strip()
             logger.warning(
-                "Path B attempt %d/%d failed (exit %d): %s",
-                attempt + 1, 2, proc.returncode, err[:200],
+                "Path B attempt %d/%d returned no image",
+                attempt + 1, 2,
             )
 
-        except subprocess.TimeoutExpired:
-            logger.warning("Path B attempt %d/%d timed out", attempt + 1, 2)
-            if attempt == 1:
-                return SlideRenderResult(
-                    slide_index=slide_index,
-                    render_path="path_b",
-                    error=f"Image generation timed out after {_IMAGE_GEN_TIMEOUT}s",
-                )
+        except ValueError as exc:
+            logger.warning("Path B validation error: %s", exc)
+            return SlideRenderResult(
+                slide_index=slide_index,
+                render_path="path_b",
+                error=str(exc),
+            )
         except Exception as exc:
-            logger.exception("Path B unexpected error on attempt %d", attempt + 1)
+            logger.warning(
+                "Path B attempt %d/%d failed: %s", attempt + 1, 2, exc
+            )
             if attempt == 1:
                 return SlideRenderResult(
                     slide_index=slide_index,
@@ -378,43 +375,109 @@ def render_path_b(
 
 
 def _build_image_prompt(slide_data: dict, style_config: dict) -> str:
-    """Compose an image generation prompt from style + slide content."""
-    explicit_prompt = slide_data.get("image_prompt")
-    if explicit_prompt:
-        return explicit_prompt
+    """
+    Compose an image generation prompt from style + slide content.
 
-    base_prompt = style_config.get("base_style_prompt", "")
+    Priority:
+      1) Writer/Visual crafted `image_prompt`
+      2) style `base_style_prompt`
+      3) fallback title/bullets summary
+    """
+    base_prompt = (style_config.get("base_style_prompt") or "").strip()
+    draft_prompt = (slide_data.get("image_prompt") or "").strip()
 
-    title = slide_data.get("title", "")
-    content = slide_data.get("content", {})
-    bullet_points = content.get("bullet_points", [])
+    title = (slide_data.get("title") or "").strip()
+    content = slide_data.get("content", {}) or {}
+    text_to_render = slide_data.get("text_to_render", {}) or {}
 
-    # Build content description
-    content_parts: list[str] = []
+    render_title = (text_to_render.get("title") or title).strip()
+    render_subtitle = (text_to_render.get("subtitle") or "").strip()
+    render_bullets = text_to_render.get("bullets") or content.get("bullet_points", [])
+    if not isinstance(render_bullets, list):
+        render_bullets = []
+
+    sections: list[str] = []
+    if base_prompt:
+        sections.append(base_prompt)
+    if draft_prompt:
+        sections.append(f"DESIGN INTENT:\n{draft_prompt}")
+
+    text_lines: list[str] = []
+    if render_title:
+        text_lines.append(f'- Title: "{render_title}"')
+    if render_subtitle:
+        text_lines.append(f'- Subtitle: "{render_subtitle}"')
+    for bullet in render_bullets[:4]:
+        text_lines.append(f'- Bullet: "{str(bullet)}"')
+    if text_lines:
+        sections.append(
+            "TEXT TO RENDER (keep exact wording and clear legibility):\n"
+            + "\n".join(text_lines)
+        )
+
+    fallback_content: list[str] = []
     if title:
-        content_parts.append(f"SLIDE TITLE: {title}")
-    if bullet_points:
-        points_text = " | ".join(str(p) for p in bullet_points[:5])
-        content_parts.append(f"KEY POINTS: {points_text}")
+        fallback_content.append(f"SLIDE TITLE: {title}")
+    if content.get("bullet_points"):
+        points_text = " | ".join(str(p) for p in content.get("bullet_points", [])[:5])
+        fallback_content.append(f"KEY POINTS: {points_text}")
+    if fallback_content:
+        sections.append("CONTENT CONTEXT:\n" + " — ".join(fallback_content))
 
-    content_description = " — ".join(content_parts)
-
-    if base_prompt and content_description:
-        return f"{base_prompt}\n\nCONTENT TO VISUALIZE: {content_description}"
-    return base_prompt or content_description or "Professional presentation slide"
+    if not sections:
+        return "Professional presentation slide, strong visual metaphor, 16:9 composition."
+    return "\n\n".join(sections)
 
 
 def _resolve_style_sample(style_config: dict) -> Optional[str]:
     """Return an absolute path to the style sample image, or None."""
     sample_url = style_config.get("sample_image_path", "")
-    if not sample_url:
-        return None
+    style_id = str(style_config.get("id") or style_config.get("style_id") or "").strip()
+    backend_root = Path(__file__).parent.parent.parent
+    project_root = backend_root.parent
 
-    # sample_image_path is "/static/styles/samples/style-XX.png"
-    # Map to filesystem: backend/static/styles/samples/style-XX.png
-    relative = sample_url.lstrip("/")
-    candidate = Path(__file__).parent.parent.parent / relative
-    return str(candidate) if candidate.exists() else None
+    candidates: list[Path] = []
+
+    if not sample_url:
+        sample_name = ""
+    else:
+        sample_name = Path(sample_url).name
+        # sample_image_path is "/static/styles/samples/style-XX.png"
+        # Map to filesystem: backend/static/styles/samples/style-XX.png
+        relative = sample_url.lstrip("/")
+        candidates.append(backend_root / relative)
+
+    # Fallback to SkillRuntime style sample dir so huashu-slides assets can be reused.
+    style_samples_dir_raw = Path(_SKILL_PACKET.get("style_samples_dir") or settings.STYLE_SAMPLES_DIR)
+    style_sample_dirs: list[Path]
+    if style_samples_dir_raw.is_absolute():
+        style_sample_dirs = [style_samples_dir_raw]
+    else:
+        style_sample_dirs = [
+            style_samples_dir_raw,
+            backend_root / style_samples_dir_raw,
+            project_root / style_samples_dir_raw,
+        ]
+
+    existing_dirs = [d for d in style_sample_dirs if d.exists()]
+    for style_samples_dir in existing_dirs:
+        names: list[str] = []
+        if sample_name:
+            names.append(sample_name)
+        if style_id:
+            names.extend([
+                f"style-{style_id}.png",
+                f"{style_id}.png",
+            ])
+        # Keep order stable while de-duplicating.
+        unique_names = list(dict.fromkeys(names))
+        for name in unique_names:
+            candidates.append(style_samples_dir / name)
+
+    for path in candidates:
+        if path.exists():
+            return str(path.resolve())
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -572,3 +635,15 @@ def _safe_unlink(p: Path) -> None:
         p.unlink(missing_ok=True)
     except Exception:
         pass
+
+
+def cleanup_tmp_files(max_age_hours: int = 6) -> int:
+    """Remove temp files older than max_age_hours. Returns count removed."""
+    import time
+    cutoff = time.time() - max_age_hours * 3600
+    removed = 0
+    for f in _TMP_DIR.iterdir():
+        if f.is_file() and f.stat().st_mtime < cutoff:
+            f.unlink(missing_ok=True)
+            removed += 1
+    return removed

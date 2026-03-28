@@ -21,6 +21,7 @@ from styles.registry import StyleDict, get_registry
 # Order matters — first match wins for primary assignment.
 
 _TOPIC_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("学术答辩", ["答辩", "论文", "thesis", "defense", "学术", "research", "硕士", "博士"]),
     ("投资路演", ["投资", "融资", "路演", "investor", "pitch", "funding", "vc", "startup"]),
     ("数据报告", ["数据", "报告", "分析", "data", "report", "analytics", "统计", "research"]),
     ("正式商务", ["商务", "business", "汇报", "corporate", "enterprise", "formal", "董事会"]),
@@ -41,6 +42,7 @@ _TOPIC_KEYWORDS: list[tuple[str, list[str]]] = [
 # ---------------------------------------------------------------------------
 
 _TOPIC_TO_STYLES: dict[str, list[str]] = {
+    "学术答辩":    ["p6-nyt-magazine", "p2-fathom", "03-ligne-claire"],
     "品牌介绍":    ["01-snoopy", "04-neo-pop", "08-ukiyo-e"],
     "教育培训":    ["18-neo-brutalism", "02-manga", "01-snoopy"],
     "技术分享":    ["05-xkcd", "18-neo-brutalism", "03-ligne-claire"],
@@ -85,10 +87,13 @@ class StyleRecommender:
         if not user_intent or not user_intent.strip():
             return self._resolve([], _DEFAULT_STYLES, max_results)
 
-        topic = self._detect_topic(user_intent.lower())
-        if topic is None:
+        ranked_topics = self._rank_topics(user_intent.lower())
+        if not ranked_topics:
             return self._resolve([], _DEFAULT_STYLES, max_results)
-        preferred = _TOPIC_TO_STYLES.get(topic, [])
+
+        preferred: list[str] = []
+        for topic, _score in ranked_topics[:2]:
+            preferred.extend(_TOPIC_TO_STYLES.get(topic, []))
         return self._resolve(preferred, _DEFAULT_STYLES, max_results)
 
     def recommend_ids(
@@ -102,13 +107,25 @@ class StyleRecommender:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _detect_topic(text: str) -> Optional[str]:
-        """Return the first matching topic key, or None."""
+    def _rank_topics(text: str) -> list[tuple[str, float]]:
+        """Score all topics and return them in descending relevance order."""
+        tokens = _tokenize_intent(text)
+        ranked: list[tuple[str, float]] = []
+
         for topic, keywords in _TOPIC_KEYWORDS:
+            score = 0.0
             for kw in keywords:
-                if re.search(re.escape(kw), text, re.IGNORECASE):
-                    return topic
-        return None
+                lowered_kw = kw.lower()
+                if lowered_kw in text:
+                    score += 2.0 if len(lowered_kw) >= 4 else 1.2
+                if lowered_kw in tokens:
+                    score += 1.0
+
+            if score > 0:
+                ranked.append((topic, score))
+
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        return ranked
 
     def _resolve(
         self,
@@ -137,3 +154,22 @@ class StyleRecommender:
                 result.append(style)
 
         return result
+
+
+def _tokenize_intent(text: str) -> set[str]:
+    latin_tokens = set(re.findall(r"[a-z0-9][a-z0-9+_.-]{1,}", text))
+    chinese_chunks = re.findall(r"[\u4e00-\u9fff]{2,}", text)
+
+    tokens = set(latin_tokens)
+    for chunk in chinese_chunks:
+        tokens.add(chunk)
+        if len(chunk) < 4:
+            continue
+        ngram_sizes = [2, 3]
+        if len(chunk) >= 8:
+            ngram_sizes.append(4)
+        for size in ngram_sizes:
+            for idx in range(0, len(chunk) - size + 1):
+                tokens.add(chunk[idx: idx + size])
+
+    return tokens
